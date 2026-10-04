@@ -1,0 +1,24 @@
+# Compiled binary.
+/truffles
+/dist/
+
+# Scan reports contain live credentials. Reports default to
+# <inputstem>-<unixtimestamp>.txt, so ignore a root-level .txt with a
+# 10-digit epoch suffix. Written this way so an input list like ai-100.txt
+# is NOT swept up by the rule.
+/*-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].txt
+*.csv
+*.jsonl
+*.txt
+
+
+# Input lists are per-machine, not source.
+/repos.txt
+
+# Editor and OS noise.
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+data/

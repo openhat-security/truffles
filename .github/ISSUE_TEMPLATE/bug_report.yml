@@ -1,0 +1,42 @@
+name: Bug report
+description: Something in truffles behaved differently than documented
+labels: [bug]
+body:
+  - type: textarea
+    id: command
+    attributes:
+      label: What did you run?
+      description: The exact command, verbatim.
+      placeholder: ./truffles scan -f repos.txt -format csv
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened?
+      description: Include the status lines ([ok], [++], [!!]) if you ran scan.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: truffles commit
+      description: Output of `git rev-parse --short HEAD`
+  - type: input
+    id: goversion
+    attributes:
+      label: Go version
+      description: Output of `go version`
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else?
+      description: |
+        Do not paste report contents. They contain live secrets; a status
+        line or a redacted finding is enough.
