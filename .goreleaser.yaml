@@ -84,24 +84,3 @@ nfpms:
         dst: /usr/share/doc/truffles/README.md
         type: doc
 
-homebrew_casks:
-  - name: truffles
-    ids:
-      - default
-    skip_upload: false
-    repository:
-      owner: openhat-security
-      name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    directory: Casks
-    homepage: https://github.com/openhat-security/truffles
-    description: Find GitHub repositories at scale and scan for leaked secrets with trufflehog.
-    license: MIT
-    commit_author:
-      name: truffles-bot
-      email: 41898282+github-actions[bot]@users.noreply.github.com
-    binaries:
-      - truffles
-
-snapshot:
-  version_template: "{{ .Version }}-next"
