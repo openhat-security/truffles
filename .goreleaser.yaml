@@ -84,48 +84,5 @@ nfpms:
         dst: /usr/share/doc/truffles/README.md
         type: doc
 
-homebrew_casks:
-  - name: truffles
-    ids:
-      - default
-    skip_upload: false
-    repository:
-      owner: openhat-security
-      name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    directory: Casks
-    homepage: https://github.com/adamsiwiec/truffles
-    description: Find GitHub repositories at scale and scan for leaked secrets with trufflehog.
-    license: MIT
-    commit_author:
-      name: truffles-bot
-      email: 41898282+github-actions[bot]@users.noreply.github.com
-    binaries:
-      - truffles
-    hooks:
-      post:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}"]
-          end
-
-scoops:
-  - name: truffles
-    ids:
-      - default
-    skip_upload: false
-    repository:
-      owner: openhat-security
-      name: scoop-bucket
-      token: "{{ .Env.SCOOP_TOKEN }}"
-    directory: bucket
-    homepage: https://github.com/adamsiwiec/truffles
-    description: Find GitHub repositories at scale and scan for leaked secrets with trufflehog.
-    license: MIT
-    commit_author:
-      name: truffles-bot
-      email: 41898282+github-actions[bot]@users.noreply.github.com
-    url_template: "https://github.com/adamsiwiec/truffles/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
-
 snapshot:
   version_template: "{{ .Version }}-next"
