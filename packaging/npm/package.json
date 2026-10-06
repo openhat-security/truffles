@@ -1,0 +1,16 @@
+{
+  "name": "@adamsiwiec/truffles",
+  "version": "1.0.0",
+  "description": "Find GitHub repos at scale and scan for leaked secrets with trufflehog.",
+  "bin": {
+    "truffles": "bin/truffles"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adamsiwiec/truffles.git"
+  },
+  "license": "MIT",
+  "files": [
+    "bin/truffles"
+  ]
+}

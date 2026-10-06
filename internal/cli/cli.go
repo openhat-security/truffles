@@ -171,6 +171,13 @@ func Main(args []string) error {
 		return nil
 	}
 
+	// Version early
+	for _, a := range args {
+		if a == "--version" || a == "-version" || a == "version" || a == "-V" {
+			return runVersion()
+		}
+	}
+
 	// Help is handled before dispatch. Otherwise `truffles -h` falls through to
 	// the default "scan" command, where the flag package prints usage to stderr
 	// and returns flag.ErrHelp, which would exit 1.
@@ -223,6 +230,8 @@ func Main(args []string) error {
 		return runCluster(rest)
 	case "cluster:coop", "coop":
 		return runClusterCoop(rest)
+	case "version", "--version", "-version", "-v":
+		return runVersion()
 	default:
 		return fmt.Errorf("unknown command %q\n\n%s", cmd, usage)
 	}
