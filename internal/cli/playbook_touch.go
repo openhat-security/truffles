@@ -49,10 +49,11 @@ func runPlaybookTouch(rest []string) error {
 
 	pb := genPlaybook("example")
 	pb.Description = "example playbook: search and scan"
-	pb.Search.Owner = "BurntSushi"
-	pb.Search.Queries = []string{"*llm*"}
+	pb.Search.Owner = "openhat-security"
+	pb.Search.Queries = []string{"*run*"}
 	pb.Search.Out = "repos-example.txt"
 	pb.Search.Limit = 50
+	pb.Search.NoProxy = true
 	pb.Scan.File = "repos-example.txt"
 	pb.Scan.Format = "pretty"
 	pb.Scan.ExcludePaths = []string{"node_modules", "vendor", "*.lock"}

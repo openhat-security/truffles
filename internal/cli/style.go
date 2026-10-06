@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/adamsiwiec/truffles/internal/version"
 )
 
 // palette provides ANSI colouring, disabled when the destination is not a
@@ -136,11 +138,49 @@ func padRight(s string, n int) string {
 	return s + strings.Repeat(" ", n-w)
 }
 
+// bannerASCII is a compact ≤80-col block spelling TRUFFLES.
+const bannerASCII = ` _____ ____  _   _ _____ _____ _     _____ ____
+|_   _|  _ \| | | |  ___|  ___| |   | ____/ ___|
+  | | | |_) | | | | |_  | |_  | |   |  _| \___ \
+  | | |  _ <| |_| |  _| |  _| | |___| |___ ___) |
+  |_| |_| \_\___/|_|   |_|   |_____|_____|____/`
+
+// showBanner reports whether help chrome should print the ASCII banner.
+func showBanner() bool {
+	if os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	return isTTY(os.Stdout)
+}
+
 func (p palette) printBanner(w io.Writer) {
-	fmt.Fprintln(w, p.bcyan("truffles"))
+	if !showBanner() || !p.on {
+		return
+	}
+	fmt.Fprintln(w, p.bcyan(bannerASCII))
+	fmt.Fprintln(w)
 }
 
 func (p palette) printTagline(w io.Writer) {
-	fmt.Fprintln(w, p.dim("Find GitHub repos at scale, then scan for secrets with trufflehog."))
+	ver := version.Version
+	if ver == "" {
+		ver = "dev"
+	}
+	fmt.Fprintf(w, "%s %s — %s\n",
+		p.bcyan("truffles"),
+		p.yellow(ver),
+		p.dim("find repos at scale, scan every commit for secrets."))
 	fmt.Fprintln(w)
+}
+
+// printNext prints a short cyan "Next:" hint block after a successful command.
+func (p palette) printNext(w io.Writer, lines ...string) {
+	if len(lines) == 0 {
+		return
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, p.byellow("Next:"))
+	for _, line := range lines {
+		fmt.Fprintf(w, "  %s\n", p.cyan(line))
+	}
 }

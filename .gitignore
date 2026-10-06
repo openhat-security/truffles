@@ -22,3 +22,10 @@
 .vscode/
 
 data/
+
+*.json
+
+# Local agent / demo scratch (not source).
+.cursor/local/
+demo-playbook.yaml
+repos-*.txt

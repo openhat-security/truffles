@@ -780,5 +780,16 @@ func runSearch(args []string) error {
 			fmt.Fprintf(os.Stderr, "[+] proxy yield %.1f%%\n", 100*float64(s.Kept)/float64(s.Probed))
 		}
 	}
+
+	p := palette{on: resolveColor("auto", os.Stderr)}
+	outHint := *out
+	if outHint == "" || outHint == "-" {
+		outHint = "repos.txt"
+	}
+	p.printNext(os.Stderr,
+		fmt.Sprintf("truffles scan -f %s", outHint),
+		fmt.Sprintf("truffles scan -f %s -format csv", outHint),
+		"truffles playbook -f playbook.yaml",
+	)
 	return nil
 }

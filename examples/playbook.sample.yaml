@@ -1,9 +1,9 @@
 name: sample
-description: search and scan example repos for secrets
+description: search and scan openhat-security repos matching *run*
 search:
-  owner: BurntSushi
+  owner: openhat-security
   queries:
-    - "*llm*"
+    - "*run*"
   out: repos-sample.txt
   limit: 50
   workers: 4

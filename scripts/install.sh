@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="adamsiwiec/truffles"
+REPO="openhat-security/truffles"
 NAME="truffles"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 

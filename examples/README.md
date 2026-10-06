@@ -1,17 +1,20 @@
 # Examples
 
-Examples for using truffles.
-
 ## Playbook
 
-Run with:
 ```bash
 ./truffles playbook -f examples/playbook.sample.yaml
+# background:
+./truffles playbook -f examples/playbook.sample.yaml -d -pidfile /tmp/truffles.pb.pid
 ```
 
-Or in background:
+The sample playbook enumerates `openhat-security` with the `*run*` glob, then scans.
+
+Author your own:
+
 ```bash
-./truffles playbook -f examples/playbook.sample.yaml -d -pidfile /tmp/truffles.pb.pid
+vim playbook.yaml
+./truffles playbook -f playbook.yaml
 ```
 
 ## Shell scripts
@@ -23,8 +26,6 @@ From repo root:
 ./examples/search-scan.sh "llm"
 
 # Owner enumeration + scan (with optional patterns)
-./examples/owner-scan.sh BurntSushi '*llm*'
-./examples/owner-scan.sh BurntSushi
+./examples/owner-scan.sh openhat-security '*run*'
+./examples/owner-scan.sh openhat-security
 ```
-
-Both scripts take a string as the first arg (or sensible defaults) and perform search then scan.

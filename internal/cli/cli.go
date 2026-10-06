@@ -167,7 +167,6 @@ func Main(args []string) error {
 		p.printBanner(os.Stdout)
 		p.printTagline(os.Stdout)
 		p.printStyledUsage(os.Stdout)
-		fmt.Fprintln(os.Stdout, p.dim("Run `truffles help` for full details."))
 		return nil
 	}
 
@@ -183,6 +182,15 @@ func Main(args []string) error {
 	// and returns flag.ErrHelp, which would exit 1.
 	switch args[0] {
 	case "help", "-h", "-help", "--help":
+		p.printBanner(os.Stdout)
+		p.printTagline(os.Stdout)
+		if len(args) > 1 && (args[1] == "full" || args[1] == "--full" || args[1] == "-full") {
+			p.printFullHelp(os.Stdout)
+		} else {
+			p.printStyledUsage(os.Stdout)
+		}
+		return nil
+	case "--help-full", "-help-full", "help-full":
 		p.printBanner(os.Stdout)
 		p.printTagline(os.Stdout)
 		p.printFullHelp(os.Stdout)
@@ -233,14 +241,36 @@ func Main(args []string) error {
 	case "version", "--version", "-version", "-v":
 		return runVersion()
 	default:
-		return fmt.Errorf("unknown command %q\n\n%s", cmd, usage)
+		return fmt.Errorf("unknown command %q — try `truffles help`", cmd)
 	}
 }
 
 func newFlagSet(name string) *flag.FlagSet {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, usage)
+		p := palette{on: resolveColor("auto", os.Stderr)}
+		switch name {
+		case "search":
+			p.helpUsage(os.Stderr, "truffles search [flags] [pattern]...")
+			p.helpSection(os.Stderr, "common flags")
+			p.helpFlag(os.Stderr, "-owner <user/org>", "Enumerate owner(s)")
+			p.helpFlag(os.Stderr, "-out <file>", "Write repo list")
+			p.helpFlag(os.Stderr, "-regex", "Patterns as regex")
+			p.helpFlag(os.Stderr, "-no-proxy", "Skip proxy pool")
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintf(os.Stderr, "%s  %s\n", p.dim("details:"), p.cyan("truffles help full"))
+		case "scan":
+			p.helpUsage(os.Stderr, "truffles scan [flags]")
+			p.helpSection(os.Stderr, "common flags")
+			p.helpFlag(os.Stderr, "-f, -file <file>", "Repo URL list (default repos.txt)")
+			p.helpFlag(os.Stderr, "-format <f>", "pretty | csv | jsonl")
+			p.helpFlag(os.Stderr, "-w, -workers <n>", "Concurrent repos")
+			p.helpFlag(os.Stderr, "-max-depth <n>", "Last N commits (lossy)")
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintf(os.Stderr, "%s  %s\n", p.dim("details:"), p.cyan("truffles help full"))
+		default:
+			fmt.Fprint(os.Stderr, usage)
+		}
 	}
 	// `truffles search -h` should print usage and succeed, not error out.
 	return fs

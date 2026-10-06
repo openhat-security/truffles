@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"os"
 	"os/exec"
@@ -318,38 +317,3 @@ func writePlaybook(pb *Playbook, path string) error {
 	return ioutil.WriteFile(path, b, 0644)
 }
 
-func (p palette) printPlaybookUsage(w io.Writer) {
-	p.printBanner(w)
-	p.printTagline(w)
-	fmt.Fprintln(w)
-	fmt.Fprintf(w, "%s %s\n", p.bcyan("truffles playbook"), p.dim("- run a playbook from YAML"))
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, p.dim("usage:"))
-	fmt.Fprintf(w, "  %s %s\n", p.cyan("truffles playbook"), p.dim("-f <playbook.yaml> [flags]"))
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, p.dim("flags:"))
-	fmt.Fprintf(w, "  %s %s\n", p.cyan("-f string"), p.dim("playbook YAML file (required)"))
-	fmt.Fprintf(w, "  %s %s\n", p.cyan("-d"), p.dim("run in background (daemon)"))
-	fmt.Fprintf(w, "  %s %s\n", p.cyan("-pidfile string"), p.dim("write PID to file"))
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, p.byellow("example playbook"))
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, p.dim("  name: sample"))
-	fmt.Fprintln(w, p.dim("  description: find and scan"))
-	fmt.Fprintln(w, p.dim("  search:"))
-	fmt.Fprintln(w, p.dim("    owner: BurntSushi"))
-	fmt.Fprintln(w, p.dim("    queries:"))
-	fmt.Fprintln(w, p.dim("      - \"*llm*\""))
-	fmt.Fprintln(w, p.dim("    out: repos.txt"))
-	fmt.Fprintln(w, p.dim("    limit: 100"))
-	fmt.Fprintln(w, p.dim("    workers: 4"))
-	fmt.Fprintln(w, p.dim("  scan:"))
-	fmt.Fprintln(w, p.dim("    file: repos.txt"))
-	fmt.Fprintln(w, p.dim("    workers: 4"))
-	fmt.Fprintln(w, p.dim("    format: pretty"))
-	fmt.Fprintln(w, p.dim("    exclude_paths:"))
-	fmt.Fprintln(w, p.dim("      - node_modules"))
-	fmt.Fprintln(w, p.dim("      - vendor"))
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, p.dim("Logs go to log_dir if set, otherwise /usr/local/var/log/truffles (macOS) or /var/log/truffles (Linux). Falls back to temp dir if not writable."))
-}

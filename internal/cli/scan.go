@@ -30,7 +30,7 @@ func runScan(args []string) error {
 	results := fs.String("results", "verified,unknown", "Result types: verified,unknown,unverified")
 	noVerify := fs.Bool("no-verification", false, "Skip live verification (much faster; everything comes back UNVERIFIED)")
 	maxDepth := fs.Int("max-depth", 0, "Only scan the last N commits per repo (0 = all history)")
-	excludePaths := fs.String("exclude-paths", "", "Comma-separated paths/globs trufflehog should skip")
+	excludePaths := fs.String("exclude-paths", "", "Comma-separated globs to skip (trufflehog --exclude-globs)")
 	jsonOut := fs.Bool("json", true, "Use JSON output")
 	out := fs.String("out", "", "Report file (default <input>-<unixtimestamp>.txt; \"-\" for stdout)")
 	colorMode := fs.String("color", "auto", "Colourise report: auto, always, never")
@@ -380,7 +380,9 @@ func scanRepo(ctx context.Context, bin, repo string, o scanOptions) Result {
 		args = append(args, fmt.Sprintf("--max-depth=%d", o.maxDepth))
 	}
 	if o.excludePaths != "" {
-		args = append(args, "--exclude-paths="+o.excludePaths)
+		// trufflehog --exclude-paths expects a *file* of regexes.
+		// Our -exclude-paths flag is comma-separated globs → --exclude-globs.
+		args = append(args, "--exclude-globs="+o.excludePaths)
 	}
 
 	res := Result{Repo: repo}

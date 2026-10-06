@@ -5,26 +5,46 @@ import (
 	"io"
 )
 
-type helpEntry struct {
-	Cmd  string
-	What string
-}
-
 func (p palette) printStyledUsage(w io.Writer) {
+	p.helpUsage(w, "truffles <command> [flags]")
+
+	p.helpSection(w, "search")
+	p.helpCmd(w, "search [pattern]...", "Find repos by owner, pattern, or globally")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, p.dim("usage:"))
-	fmt.Fprintf(w, "  %s %s\n", p.cyan("truffles search"), p.dim("[flags] [pattern]..."))
-	fmt.Fprintf(w, "  %s %s\n", p.cyan("truffles scan"), p.dim("[flags]"))
-	fmt.Fprintf(w, "  %s %s\n", p.cyan("truffles wizard"), p.dim("guided walkthrough"))
-	fmt.Fprintf(w, "  %s %s\n", p.cyan("truffles playbook"), p.dim("-f <playbook.yaml> [-d]"))
-	fmt.Fprintf(w, "  %s %s\n", p.cyan("truffles examples"), p.dim("usage examples"))
-	fmt.Fprintf(w, "  %s\n", p.cyan("truffles help"))
+
+	p.helpSection(w, "scan")
+	p.helpCmd(w, "scan", "Scan a repo list with trufflehog")
+	fmt.Fprintln(w)
+
+	p.helpSection(w, "playbook")
+	p.helpCmd(w, "playbook -f <file>", "Run search then scan from YAML")
+	p.helpCmd(w, "playbook:gen [name]", "Write a blank playbook skeleton")
+	p.helpCmd(w, "playbook:touch", "Write an example playbook")
+	fmt.Fprintln(w)
+
+	p.helpSection(w, "general")
+	p.helpCmd(w, "wizard", "Interactive guided search + scan")
+	p.helpCmd(w, "examples", "Copy-paste usage examples")
+	p.helpCmd(w, "cluster", "Split a scan across SSH workers")
+	p.helpCmd(w, "version", "Print version")
+	p.helpCmd(w, "help", "Short help (this page)")
+	p.helpCmd(w, "help full", "Full flag reference")
+	fmt.Fprintln(w)
+
+	fmt.Fprintf(w, "%s  %s\n", p.dim("new here?"), p.cyan("truffles wizard"))
+	fmt.Fprintf(w, "%s  %s\n", p.dim("details:"), p.cyan("truffles help full"))
 	fmt.Fprintln(w)
 }
 
 func (p palette) printFullHelp(w io.Writer) {
-	p.printStyledUsage(w)
+	p.helpUsage(w, "truffles <command> [flags]")
 	fmt.Fprintln(w, p.dim("Full command reference."))
+	fmt.Fprintln(w)
+
+	p.helpSection(w, "typical flow")
+	fmt.Fprintf(w, "  %s\n", p.cyan("truffles search -owner openhat-security -out repos.txt"))
+	fmt.Fprintf(w, "  %s\n", p.cyan("truffles scan -f repos.txt"))
+	fmt.Fprintf(w, "  %s\n", p.cyan("truffles playbook -f playbook.yaml"))
 	fmt.Fprintln(w)
 
 	p.helpSection(w, "search")
@@ -38,8 +58,14 @@ func (p palette) printFullHelp(w io.Writer) {
 	p.helpCmd(w, "-workers <n>", "Concurrent page fetches (default 8)")
 	p.helpCmd(w, "-pool-size <n>", "Target validated proxies (default 30)")
 	p.helpCmd(w, "-pool-wait <dur>", "Wait for first proxy (default 60s)")
+	p.helpCmd(w, "-probe-par <n>", "Concurrent proxy probes (default 300)")
+	p.helpCmd(w, "-retries <n>", "Attempts per page (default 4)")
+	p.helpCmd(w, "-progress <dur>", "Heartbeat interval; 0 disables (default 10s)")
 	p.helpCmd(w, "-no-proxy", "Skip proxy pool, connect directly")
-	p.helpCmd(w, "-v", "Verbose: show proxy for each request and probe failures")
+	p.helpCmd(w, "-use-direct", "Also spend this machine's rate budget (default true)")
+	p.helpCmd(w, "-no-direct", "Proxies only; never use this machine's IP")
+	p.helpCmd(w, "-token <t>", "GitHub token (raises rate limits)")
+	p.helpCmd(w, "-v", "Verbose: proxy per request and probe failures")
 	fmt.Fprintln(w)
 
 	p.helpSection(w, "scan")
@@ -48,6 +74,7 @@ func (p palette) printFullHelp(w io.Writer) {
 	p.helpCmd(w, "-bin <path>", "trufflehog binary (default trufflehog)")
 	p.helpCmd(w, "-w, -workers <n>", "Concurrent repos (default 4)")
 	p.helpCmd(w, "-token <t>", "GitHub token for private repos")
+	p.helpCmd(w, "-results <s>", "verified,unknown,unverified (default verified,unknown)")
 	p.helpCmd(w, "-format <f>", "pretty | csv | jsonl (default pretty)")
 	p.helpCmd(w, "-out <file>", "- for stdout or <name>-<ts>.<ext>")
 	p.helpCmd(w, "-json", "Use trufflehog JSON (default true)")
@@ -55,14 +82,57 @@ func (p palette) printFullHelp(w io.Writer) {
 	p.helpCmd(w, "-max-depth <n>", "Last N commits (0=all history; lossy)")
 	p.helpCmd(w, "-exclude-paths <s>", "Skip paths/globs (comma-separated)")
 	p.helpCmd(w, "-color <m>", "auto|always|never (default auto)")
+	p.helpCmd(w, "-progress <dur>", "Heartbeat interval; 0 disables (default 10s)")
 	p.helpCmd(w, "-v", "Show trufflehog logs")
+	fmt.Fprintln(w)
+
+	p.helpSection(w, "playbook")
+	p.helpCmd(w, "playbook -f <file>", "Run search then scan from YAML")
+	p.helpCmd(w, "  -d", "Daemonize (re-exec in background)")
+	p.helpCmd(w, "  -pidfile <path>", "Write PID when daemonizing")
+	p.helpCmd(w, "playbook:gen [name]", "Write a blank playbook skeleton")
+	p.helpCmd(w, "playbook:touch [-o file]", "Write an example playbook")
+	fmt.Fprintln(w)
+
+	p.helpSection(w, "cluster")
+	p.helpCmd(w, "cluster init", "Write a cluster YAML skeleton")
+	p.helpCmd(w, "cluster run", "Distribute and scan across SSH workers")
+	p.helpCmd(w, "cluster distribute", "Split a repo list onto workers")
+	p.helpCmd(w, "cluster collect", "Pull worker result files")
+	p.helpCmd(w, "cluster status", "Show worker reachability")
+	p.helpCmd(w, "cluster:coop", "Cooperative multi-host scan")
 	fmt.Fprintln(w)
 
 	p.helpSection(w, "general")
 	p.helpCmd(w, "wizard", "Interactive guided setup: search + scan")
 	p.helpCmd(w, "examples", "Show usage examples")
-	p.helpCmd(w, "playbook", "Run playbook from YAML (-f playbook.yaml [-d] [-pidfile])")
-	p.helpCmd(w, "help, -h, --help", "Show this help")
+	p.helpCmd(w, "version", "Print version")
+	p.helpCmd(w, "help, -h", "Short grouped help")
+	p.helpCmd(w, "help full", "This page")
 	p.helpCmd(w, "NO_COLOR", "Disable color if set")
+	fmt.Fprintln(w)
+}
+
+func (p palette) printPlaybookUsage(w io.Writer) {
+	p.printBanner(w)
+	p.printTagline(w)
+	p.helpUsage(w, "truffles playbook -f <playbook.yaml> [-d] [-pidfile path]")
+	p.helpSection(w, "flags")
+	p.helpFlag(w, "-f <file>", "Playbook YAML (required)")
+	p.helpFlag(w, "-d", "Run in background")
+	p.helpFlag(w, "-pidfile <path>", "Write PID when using -d")
+	fmt.Fprintln(w)
+	p.helpSection(w, "also")
+	p.helpCmd(w, "playbook:gen [name] -o file", "Blank skeleton")
+	p.helpCmd(w, "playbook:touch -o file", "Example playbook")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, p.dim("YAML shape:"))
+	fmt.Fprintln(w, p.dim("  search:"))
+	fmt.Fprintln(w, p.dim("    owner: openhat-security"))
+	fmt.Fprintln(w, p.dim("    queries: [\"*run*\"]"))
+	fmt.Fprintln(w, p.dim("    out: repos.txt"))
+	fmt.Fprintln(w, p.dim("  scan:"))
+	fmt.Fprintln(w, p.dim("    file: repos.txt"))
+	fmt.Fprintln(w, p.dim("    format: pretty"))
 	fmt.Fprintln(w)
 }

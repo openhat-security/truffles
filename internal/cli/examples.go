@@ -11,15 +11,15 @@ func (p palette) printExamples(w io.Writer) {
 	fmt.Fprintln(w, p.byellow("examples"))
 	fmt.Fprintln(w)
 
-	fmt.Fprintf(w, "  %s %s\n", p.cyan("truffles search -owner BurntSushi '*llm*' -out repos.txt"),
-		p.dim("# enumerate owner's repos, filter by pattern"))
-	fmt.Fprintf(w, "  %s %s\n", p.cyan("truffles search -owner BurntSushi,torvalds,rust-lang '*llm*' -out repos.txt"),
-		p.dim("# multiple owners"))
-	fmt.Fprintf(w, "  %s %s\n", p.cyan("truffles search -owner BurntSushi -regex '^ri' -out repos.txt"),
+	fmt.Fprintf(w, "  %s %s\n", p.cyan("truffles search -owner openhat-security -out repos.txt"),
+		p.dim("# every public repo under the org"))
+	fmt.Fprintf(w, "  %s %s\n", p.cyan("truffles search -owner openhat-security '*run*' -out repos.txt"),
+		p.dim("# glob filter on repo names"))
+	fmt.Fprintf(w, "  %s %s\n", p.cyan("truffles search -owner openhat-security -regex '^run' -out repos.txt"),
 		p.dim("# regex filter"))
 	fmt.Fprintf(w, "  %s %s\n", p.cyan("truffles search 'llm' -limit 100"),
 		p.dim("# global search"))
-	fmt.Fprintf(w, "  %s %s\n", p.cyan("truffles search -no-proxy -owner BurntSushi '*llm*'"),
+	fmt.Fprintf(w, "  %s %s\n", p.cyan("truffles search -no-proxy -owner openhat-security"),
 		p.dim("# skip proxy pool"))
 	fmt.Fprintf(w, "  %s %s\n", p.cyan("truffles scan -f repos.txt -workers 4"),
 		p.dim("# scan from file"))
@@ -29,7 +29,7 @@ func (p palette) printExamples(w io.Writer) {
 		p.dim("# skip noisy paths"))
 	fmt.Fprintf(w, "  %s %s\n", p.cyan("truffles wizard"),
 		p.dim("# interactive walkthrough"))
-	fmt.Fprintf(w, "  %s %s\n", p.cyan("truffles playbook -f playbook.yaml"),
-		p.dim("# run a defined playbook"))
+	fmt.Fprintf(w, "  %s %s\n", p.cyan("vim playbook.yaml && truffles playbook -f playbook.yaml"),
+		p.dim("# author + run a playbook"))
 	fmt.Fprintln(w)
 }
