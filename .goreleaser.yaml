@@ -88,7 +88,7 @@ homebrew_casks:
   - name: truffles
     ids:
       - default
-    skip_upload: '{{ not (isEnvSet "HOMEBREW_TAP_TOKEN") }}'
+    skip_upload: false
     repository:
       owner: openhat-security
       name: homebrew-tap
@@ -113,7 +113,7 @@ scoops:
   - name: truffles
     ids:
       - default
-    skip_upload: '{{ not (isEnvSet "SCOOP_TOKEN") }}'
+    skip_upload: false
     repository:
       owner: openhat-security
       name: scoop-bucket
