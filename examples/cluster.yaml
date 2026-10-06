@@ -1,0 +1,9 @@
+name: example-cluster
+master: localhost
+slaves:
+  - name: local
+    host: localhost
+    user: "$USER"
+    enabled: false  # set to true if you have remote nodes
+    workdir: /tmp/truffles-work
+    truffles_path: truffles

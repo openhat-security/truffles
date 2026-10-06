@@ -150,16 +150,35 @@ so your shell and other tools are unaffected.
 // os.Args so it can be called from tests, and it returns errors instead of
 // exiting, leaving exit codes to the entry point.
 func Main(args []string) error {
+	colorMode := "auto"
+	if v := os.Getenv("NO_COLOR"); v != "" {
+		colorMode = "never"
+	}
+	for _, a := range args {
+		if a == "-color=never" || a == "--color=never" {
+			colorMode = "never"
+		} else if a == "-color=always" || a == "--color=always" {
+			colorMode = "always"
+		}
+	}
+	p := palette{on: resolveColor(colorMode, os.Stdout)}
+
 	if len(args) == 0 {
-		fmt.Print(usage)
+		p.printBanner(os.Stdout)
+		p.printTagline(os.Stdout)
+		p.printStyledUsage(os.Stdout)
+		fmt.Fprintln(os.Stdout, p.dim("Run `truffles help` for full details."))
 		return nil
 	}
+
 	// Help is handled before dispatch. Otherwise `truffles -h` falls through to
 	// the default "scan" command, where the flag package prints usage to stderr
 	// and returns flag.ErrHelp, which would exit 1.
 	switch args[0] {
 	case "help", "-h", "-help", "--help":
-		fmt.Print(usage)
+		p.printBanner(os.Stdout)
+		p.printTagline(os.Stdout)
+		p.printFullHelp(os.Stdout)
 		return nil
 	}
 
@@ -173,6 +192,37 @@ func Main(args []string) error {
 		return runSearch(rest)
 	case "scan":
 		return runScan(rest)
+	case "wizard":
+		return runWizard(rest)
+	case "examples", "example":
+		p.printExamples(os.Stdout)
+		return nil
+	case "playbook":
+		return runPlaybook(rest)
+	case "playbook:gen", "gen:playbook", "pbgen":
+		// quick generate
+		name := "playbook"
+		out := "playbook.yaml"
+		for i := 0; i < len(rest); i++ {
+			if (rest[i] == "-o" || rest[i] == "--out") && i+1 < len(rest) {
+				out = rest[i+1]
+				i++
+			} else if !strings.HasPrefix(rest[i], "-") {
+				name = rest[i]
+			}
+		}
+		pb := genPlaybook(name)
+		if err := writePlaybook(pb, out); err != nil {
+			return err
+		}
+		fmt.Printf("wrote %s\n", out)
+		return nil
+	case "playbook:touch", "playbook:example", "playbook:make-example", "pb:example", "pb:touch", "touch-example", "make-example", "example:playbook", "mkplaybook", "playbook:make", "make:playbook", "playbook:touch-example":
+		return runPlaybookTouch(rest)
+	case "cluster":
+		return runCluster(rest)
+	case "cluster:coop", "coop":
+		return runClusterCoop(rest)
 	default:
 		return fmt.Errorf("unknown command %q\n\n%s", cmd, usage)
 	}

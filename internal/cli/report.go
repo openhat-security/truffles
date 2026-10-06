@@ -178,19 +178,19 @@ func (w prettyWriter) Write(b []byte) (int, error) { return w.sb.Write(b) }
 func renderRepo(w io.Writer, p palette, repo string, res Result) {
 	name := shortRepo(repo)
 	if res.Err != nil {
-		fmt.Fprintf(w, "\n%s %s %s\n", p.red("[!!]"), p.bold(name),
+		fmt.Fprintf(w, "\n%s %s %s\n", p.bred("[!!]"), p.bold(name),
 			p.dim(fmt.Sprintf("(%s)", res.Duration.Round(time.Millisecond))))
 		fmt.Fprintf(w, "      %s %v\n", p.dim("error:"), res.Err)
 		return
 	}
 	if len(res.Findings) == 0 {
 		if res.Lines == 0 {
-			fmt.Fprintf(w, "\n%s %s %s\n", p.green("[ok]"), p.bold(name),
+			fmt.Fprintf(w, "\n%s %s %s\n", p.bgreen("[ok]"), p.bold(name),
 				p.dim(fmt.Sprintf("(%s) clean", res.Duration.Round(time.Millisecond))))
 			return
 		}
 
-		fmt.Fprintf(w, "\n%s %s\n", p.cyan("[--]"), p.bold(name))
+		fmt.Fprintf(w, "\n%s %s\n", p.bcyan("[--]"), p.bold(name))
 		fmt.Fprint(w, res.Output)
 		if !strings.HasSuffix(res.Output, "\n") {
 			fmt.Fprintln(w)
@@ -207,7 +207,7 @@ func renderRepo(w io.Writer, p palette, repo string, res Result) {
 	head := fmt.Sprintf("\n%s %s", p.byellow("[++]"), p.bold(name))
 	head += p.dim(fmt.Sprintf("  %d finding(s) in %s", len(res.Findings), res.Duration.Round(time.Millisecond)))
 	if nv == len(res.Findings) {
-		head += "  " + p.yellow("all unverified")
+		head += "  " + p.byellow("all unverified")
 	}
 	fmt.Fprintln(w, head)
 

@@ -1,0 +1,20 @@
+name: sample
+description: search and scan example repos for secrets
+search:
+  owner: BurntSushi
+  queries:
+    - "*llm*"
+  out: repos-sample.txt
+  limit: 50
+  workers: 4
+  pool_size: 20
+  no_proxy: false
+scan:
+  file: repos-sample.txt
+  workers: 4
+  format: pretty
+  exclude_paths:
+    - node_modules
+    - vendor
+    - "*.lock"
+log_dir: /tmp/truffles-logs

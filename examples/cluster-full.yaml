@@ -1,0 +1,37 @@
+name: full-cluster
+master: master@10.0.0.100
+slaves:
+  - name: worker1
+    host: 10.0.0.101
+    user: ubuntu
+    port: 22
+    key: ~/.ssh/id_ed25519  # SSH private key (path on master)
+    workdir: /home/ubuntu/truffles-work
+    truffles_path: /usr/local/bin/truffles  # or just "truffles" if in PATH
+    enabled: true
+  - name: worker2
+    host: 10.0.0.102
+    user: ubuntu
+    port: 22
+    key: ~/.ssh/id_ed25519
+    workdir: /home/ubuntu/truffles-work
+    truffles_path: truffles
+    enabled: true
+  - name: worker3
+    host: 10.0.0.103
+    user: ubuntu
+    port: 2222
+    key: /Users/alice/.ssh/work_key
+    workdir: /opt/truffles/work
+    truffles_path: truffles
+    enabled: false  # disabled example
+
+# Notes:
+# - master is the controlling node (can be this machine or remote). 
+# - For password auth, set up SSH keys or use sshpass (not shown here). 
+#   Prefer key-based auth (BatchMode=yes requires non-interactive auth).
+# - workdir must exist on slaves or truffles will fail to write; the distribute/run 
+#   commands scp files into workdir and run from there.
+# - If using a shared filesystem for coop mode, set queue path to shared location.
+# - username/password via SSH: not stored in this YAML by default (security). 
+#   Use ssh-agent, passwordless keys, or sshpass in your environment.

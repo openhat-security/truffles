@@ -1,0 +1,13 @@
+name: cluster-scan
+description: scan across cluster defined in cluster.yaml
+search:
+  owner: BurntSushi
+  queries:
+    - "*llm*"
+  out: repos-cluster.txt
+  limit: 20
+  workers: 2
+scan:
+  file: repos-cluster.txt
+  workers: 2
+  format: csv
