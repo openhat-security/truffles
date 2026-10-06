@@ -112,15 +112,15 @@ func TestWriteCSVQuotesEmbeddedSeparators(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatalf("got %d rows, want header + 1", len(rows))
 	}
-	if len(rows[0]) != 11 {
+	if len(rows[0]) != 10 {
 		t.Errorf("header has %d columns, want 11", len(rows[0]))
 	}
 	for i, row := range rows {
-		if len(row) != 11 {
+		if len(row) != 10 {
 			t.Errorf("row %d has %d columns, want 11", i, len(row))
 		}
 	}
-	if rows[1][9] != "a,b\"c\nd" {
+	if rows[1][3] != "a,b\"c\nd" {
 		t.Errorf("secret column = %q, want the raw value preserved", rows[1][9])
 	}
 }
@@ -140,7 +140,7 @@ func TestWriteCSVHeaderIsWrittenOnceAndDataAppended(t *testing.T) {
 	if len(rows) != 3 {
 		t.Fatalf("got %d rows, want 1 header + 2 findings", len(rows))
 	}
-	if rows[0][0] != "repo" || rows[0][10] != "verification_error" {
+	if rows[0][0] != "detector" || rows[0][9] != "verification_error" {
 		t.Errorf("unexpected header: %v", rows[0])
 	}
 }

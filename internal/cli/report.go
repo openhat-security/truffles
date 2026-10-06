@@ -120,8 +120,8 @@ type Result struct {
 // consult the pretty report or the summary for clean/failed counts.
 // csvColumns is the CSV column order. It is written once per report, before
 // any repo completes, so the header is on disk immediately.
-var csvColumns = []string{"repo", "verified", "detector", "decoder", "file", "line",
-	"commit", "timestamp", "author", "secret", "verification_error"}
+var csvColumns = []string{"detector", "verified", "timestamp", "secret", "repository_url", "file_line",
+	"commit", "author", "decoder", "verification_error"}
 
 // writeCSVHeader emits the column names and flushes.
 func writeCSVHeader(w io.Writer) {
@@ -139,17 +139,20 @@ func writeCSV(w io.Writer, res Result) {
 			repo = res.Repo
 		}
 		g := f.SourceMetadata.Data.Git
+		fl := g.File
+		if g.Line > 0 {
+			fl = g.File + ":" + strconv.Itoa(g.Line)
+		}
 		cw.Write([]string{
-			repo,
-			strconv.FormatBool(f.Verified),
 			f.DetectorName,
-			f.DecoderName,
-			g.File,
-			strconv.Itoa(g.Line),
-			g.Commit,
+			strconv.FormatBool(f.Verified),
 			g.Timestamp,
-			g.Email,
 			f.Secret(),
+			repo,
+			fl,
+			g.Commit,
+			g.Email,
+			f.DecoderName,
 			f.VerificationErr,
 		})
 	}
