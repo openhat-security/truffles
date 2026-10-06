@@ -53,7 +53,7 @@ changelog:
 
 release:
   github:
-    owner: adamsiwiec
+    owner: openhat-security
     name: truffles
   draft: false
   prerelease: auto
@@ -90,7 +90,7 @@ homebrew_casks:
       - default
     skip_upload: '{{ not (isEnvSet "HOMEBREW_TAP_TOKEN") }}'
     repository:
-      owner: adamsiwiec
+      owner: openhat-security
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Casks
@@ -115,7 +115,7 @@ scoops:
       - default
     skip_upload: '{{ not (isEnvSet "SCOOP_TOKEN") }}'
     repository:
-      owner: adamsiwiec
+      owner: openhat-security
       name: scoop-bucket
       token: "{{ .Env.SCOOP_TOKEN }}"
     directory: bucket
