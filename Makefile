@@ -1,5 +1,5 @@
 # Development tasks. `make` builds; `make check` is what CI runs.
-BINARY  := truffles
+BINARY  := ./bin/truffles
 PKG     := ./...
 GOFLAGS ?=
 

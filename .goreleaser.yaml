@@ -65,8 +65,8 @@ nfpms:
       - truffles
     package_name: truffles
     file_name_template: "truffles_{{ .Version }}_{{ .Arch }}"
-    homepage: https://github.com/adamsiwiec/truffles
-    maintainer: Adam Siwiec <opensource@adamsiwiec.com>
+    homepage: https://github.com/openhat-security/truffles
+    maintainer: OpenHat Security <opensource@openhat.dev>
     description: |-
       Find GitHub repositories at scale, then scan their full git history for leaked credentials with trufflehog.
     license: MIT
@@ -83,4 +83,50 @@ nfpms:
       - src: README.md
         dst: /usr/share/doc/truffles/README.md
         type: doc
+
+homebrew_casks:
+  - name: truffles
+    ids:
+      - default
+    skip_upload: '{{ not (isEnvSet "HOMEBREW_TAP_TOKEN") }}'
+    repository:
+      owner: openhat-security
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Casks
+    homepage: https://github.com/openhat-security/truffles
+    description: Find GitHub repositories at scale, then scan git history for leaked credentials with trufflehog.
+    license: MIT
+    commit_author:
+      name: truffles-bot
+      email: 41898282+github-actions[bot]@users.noreply.github.com
+    binaries:
+      - truffles
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}"]
+          end
+
+scoops:
+  - name: truffles
+    ids:
+      - default
+    skip_upload: '{{ not (isEnvSet "SCOOP_TOKEN") }}'
+    repository:
+      owner: openhat-security
+      name: scoop-bucket
+      token: "{{ .Env.SCOOP_TOKEN }}"
+    directory: bucket
+    homepage: https://github.com/openhat-security/truffles
+    description: Find GitHub repositories at scale, then scan git history for leaked credentials with trufflehog.
+    license: MIT
+    commit_author:
+      name: truffles-bot
+      email: 41898282+github-actions[bot]@users.noreply.github.com
+    url_template: "https://github.com/openhat-security/truffles/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
+
+snapshot:
+  version_template: "{{ .Version }}-next"
 

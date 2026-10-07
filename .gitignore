@@ -1,5 +1,6 @@
 # Compiled binary.
 /truffles
+/bin/
 /dist/
 
 # Scan reports contain live credentials. Reports default to
@@ -29,3 +30,8 @@ data/
 .cursor/local/
 demo-playbook.yaml
 repos-*.txt
+
+# Machine-specific remote worker credentials (see *.env.example / *.example.env).
+*.env
+!*.env.example
+!*.example.env

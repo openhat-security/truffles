@@ -1,16 +1,47 @@
 {
-  "name": "@adamsiwiec/truffles",
-  "version": "1.0.0",
-  "description": "Find GitHub repos at scale and scan for leaked secrets with trufflehog.",
-  "bin": {
-    "truffles": "bin/truffles"
+  "name": "truffles",
+  "version": "0.0.0",
+  "description": "Find GitHub repos at scale and scan git history for leaked credentials.",
+  "keywords": [
+    "truffles",
+    "github",
+    "secrets",
+    "trufflehog",
+    "cli",
+    "security"
+  ],
+  "homepage": "https://github.com/openhat-security/truffles",
+  "bugs": {
+    "url": "https://github.com/openhat-security/truffles/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/adamsiwiec/truffles.git"
+    "url": "git+https://github.com/openhat-security/truffles.git",
+    "directory": "packaging/npm"
   },
   "license": "MIT",
+  "author": "OpenHat Security",
+  "bin": {
+    "truffles": "bin/truffles"
+  },
   "files": [
-    "bin/truffles"
+    "bin/",
+    "install.js",
+    "README.md"
+  ],
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
   ]
 }

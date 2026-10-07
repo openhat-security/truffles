@@ -22,18 +22,39 @@ Enumerate owners or search globally (with a proxy pool for rate limits), filter 
 ## Install
 
 ```bash
+# macOS / Linux — Homebrew
+brew install --cask openhat-security/tap/truffles
+
+# Debian / Ubuntu — apt (shared OpenHat pool)
+curl -fsSL https://openhat-security.github.io/packages/install-apt-truffles.sh | sudo bash
+
+# Fedora / RHEL — dnf
+curl -fsSL https://openhat-security.github.io/packages/install-dnf-truffles.sh | sudo bash
+
+# Windows — Scoop
+scoop bucket add openhat https://github.com/openhat-security/scoop-bucket
+scoop install truffles
+
+# Windows — winget
+winget install OpenHatSecurity.Truffles
+
+# any OS — npm (Node ≥ 18)
+npm install -g truffles
+
+# macOS / Linux — direct binary
+curl -fsSL https://raw.githubusercontent.com/openhat-security/truffles/main/scripts/install.sh | bash
+
 # from source
 git clone https://github.com/openhat-security/truffles
 cd truffles
 make build          # → ./truffles
 make install        # or: go install ./cmd/truffles
 
-# direct binary (macOS / Linux)
-curl -fsSL https://raw.githubusercontent.com/openhat-security/truffles/main/scripts/install.sh | bash
-
 # Go
 go install github.com/adamsiwiec/truffles/cmd/truffles@latest
 ```
+
+Packaging details: [packaging/README.md](packaging/README.md) · Releases: [github.com/openhat-security/truffles/releases](https://github.com/openhat-security/truffles/releases)
 
 Requires [`trufflehog`](https://github.com/trufflesecurity/trufflehog) on `PATH` for `scan` (override with `-bin`). A GitHub token is optional for public search and required for private repos.
 
@@ -49,8 +70,13 @@ Requires [`trufflehog`](https://github.com/trufflesecurity/trufflehog) on `PATH`
 # glob filter (repo names matching *run*)
 ./truffles search -owner openhat-security '*run*' -out repos.txt
 
-# scan history
+# scan history (default report format: csv; also writes .txt)
 ./truffles scan -f repos.txt
+
+# coordinated disclosure from a results CSV (dry-run; add -submit to POST)
+./truffles disclose -f data/remote-results/results.csv
+./truffles disclose -f data/remote-results -submit   # prompts for token once, then reuses it
+# PVR on → private advisory; PVR off → issue pointing to openhat@devrecated.com
 
 # or: author a playbook and run both steps
 vim playbook.yaml

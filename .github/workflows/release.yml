@@ -7,15 +7,21 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing tag to publish for (e.g. v1.0.0)."
+        description: "Existing tag to publish npm for (e.g. v1.0.14). Leave empty for a full release from a tag push."
         required: false
         type: string
+      npm_only:
+        description: "Only publish npm (skip GoReleaser)"
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: write
 
 jobs:
   goreleaser:
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.npm_only)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -34,5 +40,68 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Do not fall back to GITHUB_TOKEN — it cannot write to homebrew-tap / scoop-bucket.
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN || secrets.PACKAGING_TOKEN }}
           SCOOP_TOKEN: ${{ secrets.SCOOP_TOKEN || secrets.PACKAGING_TOKEN }}
+
+  npm:
+    needs: goreleaser
+    if: |
+      always() && (
+        (github.event_name == 'push' && needs.goreleaser.result == 'success') ||
+        (github.event_name == 'workflow_dispatch' && (inputs.npm_only || needs.goreleaser.result == 'success'))
+      )
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Publish npm package
+        working-directory: packaging/npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VER: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "NPM_TOKEN not set — skipping npm publish"
+            exit 0
+          fi
+          VER="${VER#v}"
+          node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('package.json','utf8')); p.version=process.env.VER; fs.writeFileSync('package.json', JSON.stringify(p,null,2)+'\n')"
+          echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > .npmrc
+          npm publish --access public
+
+  winget:
+    needs: goreleaser
+    if: |
+      always() && (
+        (github.event_name == 'push' && needs.goreleaser.result == 'success') ||
+        (github.event_name == 'workflow_dispatch' && !inputs.npm_only && needs.goreleaser.result == 'success')
+      )
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Update winget manifests / submit PR
+        env:
+          WINGET_PAT: ${{ secrets.WINGET_PAT }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          VER="${TAG#v}"
+          ASSET="truffles_${VER}_windows_amd64.zip"
+          URL="https://github.com/openhat-security/truffles/releases/download/${TAG}/${ASSET}"
+          bash packaging/winget/generate.sh "$VER" "$URL"
+          if [ -z "${WINGET_PAT:-}" ]; then
+            echo "WINGET_PAT not set — manifests written under packaging/winget/${VER}/ (manual PR)"
+            exit 0
+          fi
+          curl -fsSL -o /tmp/komac "https://github.com/russellbanks/Komac/releases/latest/download/komac-x86_64-unknown-linux-gnu" || true
+          if [ -x /tmp/komac ] || [ -f /tmp/komac ]; then
+            chmod +x /tmp/komac
+            /tmp/komac update OpenHatSecurity.Truffles --version "$VER" --urls "$URL" --submit --token "$WINGET_PAT" || \
+              echo "komac submit failed; use packaging/winget/${VER}/ for a manual PR to microsoft/winget-pkgs"
+          else
+            echo "komac unavailable; use packaging/winget/${VER}/ for a manual PR"
+          fi
