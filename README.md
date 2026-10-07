@@ -16,10 +16,6 @@ Enumerate owners or search globally (with a proxy pool for rate limits), filter 
   <img src="assets/screenshots/quickstart.gif" alt="truffles — search openhat-security, filter with *run*, author a playbook in vim, run it" width="100%"/>
 </p>
 
-<p align="center">
-  <img src="assets/screenshots/help.png" alt="truffles -help — ASCII banner and grouped commands including wizard" width="100%"/>
-</p>
-
 ## Install
 
 ```bash
@@ -69,6 +65,10 @@ vim playbook.yaml
 ## wizard
 
 New here? Run `truffles wizard`. It walks you through owner vs global search, optional filters, writing a repo list, and kicking off a scan — same pipeline as the commands above, without memorizing flags.
+
+<p align="center">
+  <img src="assets/screenshots/help.png" alt="truffles -help — ASCII banner and grouped commands including wizard" width="100%"/>
+</p>
 
 ## Tips
 
