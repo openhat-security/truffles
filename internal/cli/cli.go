@@ -12,6 +12,7 @@ const usage = `truffles - GitHub repo enumeration + secret scanning
 usage:
   truffles search [flags] [pattern]...   find repos by owner, by pattern, or both
   truffles scan [flags]                  scan repos from a file with trufflehog
+  truffles disclose [flags]              private advisory or contact issue from CSV
   truffles help                          show this message
 
 Owner and pattern are each optional, but at least one is required.
@@ -47,7 +48,7 @@ search flags:
   -no-proxy       connect directly, skipping the proxy pool
   -token string   GitHub token (raises rate limits)
 
-proxy pool:
+proxy pool (search):
   Free proxies are ~4% yield and ~58% die within 45s, so the pool validates
   candidates against api.github.com in the background and replenishes itself.
   Validation yield is flat with concurrency but wall time is not, so probes
@@ -67,16 +68,26 @@ scan flags:
   -no-verification   skip live verification (see "speeding up scans")
   -max-depth int     only scan the last N commits per repo (0 = all history)
   -exclude-paths s   comma-separated paths/globs for trufflehog to skip
-  -out string        report file (default <input>-<unixtimestamp>.txt, "-" for stdout)
-  -format string     report format: pretty, csv, jsonl (default "pretty")
+  -out string        report file (default <input>-<unixtimestamp>.csv, "-" for stdout)
+  -format string     report format: pretty, csv, jsonl (default "csv")
+  -skip-file string  skip repos listed here (already scanned; one URL per line)
+  -append-scanned s  append successfully scanned URLs to this master file
+  -no-proxy          direct clones (default true); -no-proxy=false enables pool
   -color string      colourise: auto, always, never (default "auto")
   -progress dur      log progress this often; 0 disables (default 10s)
   -v                 also show trufflehog's own log output
 
+  Scan defaults to direct clones: free proxies stall multi-GB packs and undercut
+  parallel workers. Scale scan throughput with more hosts (cluster slaves run in
+  parallel) and per-host -workers, not a bigger proxy pool.
+
 scan output:
   Progress goes to stderr. The report goes to -out, which defaults to a fresh
   timestamped file so runs never overwrite each other, and is flushed and
-  fsynced after every repo — Ctrl-C keeps everything finished so far. Each
+  fsynced after every repo — Ctrl-C keeps everything finished so far. When
+  writing to disk with -format pretty or csv, both a .txt report and a .csv
+  are written (same stem). -skip-file drops already-scanned URLs; pass the
+  same path to -append-scanned to grow a master list across runs. Each
   repo also prints a status line, plus a heartbeat with counts and an ETA:
 
     [ok] stripe/ai                                       5.072s  clean
@@ -207,13 +218,20 @@ func Main(args []string) error {
 		return runSearch(rest)
 	case "scan":
 		return runScan(rest)
+	case "disclose":
+		return runDisclose(rest)
 	case "wizard":
 		return runWizard(rest)
 	case "examples", "example":
 		p.printExamples(os.Stdout)
 		return nil
 	case "playbook":
+		if len(rest) > 0 && (rest[0] == "heal" || rest[0] == "recover") {
+			return runPlaybookHeal(rest[1:])
+		}
 		return runPlaybook(rest)
+	case "heal":
+		return clusterHeal(rest)
 	case "playbook:gen", "gen:playbook", "pbgen":
 		// quick generate
 		name := "playbook"
@@ -263,8 +281,11 @@ func newFlagSet(name string) *flag.FlagSet {
 			p.helpUsage(os.Stderr, "truffles scan [flags]")
 			p.helpSection(os.Stderr, "common flags")
 			p.helpFlag(os.Stderr, "-f, -file <file>", "Repo URL list (default repos.txt)")
-			p.helpFlag(os.Stderr, "-format <f>", "pretty | csv | jsonl")
+			p.helpFlag(os.Stderr, "-format <f>", "pretty | csv | jsonl (default csv)")
 			p.helpFlag(os.Stderr, "-w, -workers <n>", "Concurrent repos")
+			p.helpFlag(os.Stderr, "-skip-file <f>", "Skip already-scanned repos")
+			p.helpFlag(os.Stderr, "-append-scanned <f>", "Grow master scanned list")
+			p.helpFlag(os.Stderr, "-no-proxy", "Direct clones (default); =false for pool")
 			p.helpFlag(os.Stderr, "-max-depth <n>", "Last N commits (lossy)")
 			fmt.Fprintln(os.Stderr)
 			fmt.Fprintf(os.Stderr, "%s  %s\n", p.dim("details:"), p.cyan("truffles help full"))

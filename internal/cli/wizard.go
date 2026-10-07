@@ -95,9 +95,9 @@ func runWizard(rest []string) error {
 			scanCmd = append(scanCmd, "-workers", v)
 		}
 	}
-	fmt.Print("Format (pretty/csv/jsonl) [pretty]: ")
+	fmt.Print("Format (pretty/csv/jsonl) [csv]: ")
 	if scanner.Scan() {
-		if v := strings.TrimSpace(scanner.Text()); v != "" && v != "pretty" {
+		if v := strings.TrimSpace(scanner.Text()); v != "" && v != "csv" {
 			scanCmd = append(scanCmd, "-format", v)
 		}
 	}

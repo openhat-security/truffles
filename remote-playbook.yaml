@@ -1,0 +1,101 @@
+# Search locally, scan on remote GCE workers, pull results back.
+# Host / user / key / workdir live in remote.env (gitignored).
+#   cp remote.example.env remote.env
+#
+# Run (TTY prompts for data dir + scan name; -y skips prompts):
+#   ./truffles playbook -f remote-playbook.yaml
+#   ./truffles playbook -f remote-playbook.yaml -y -data-dir data -out remote-results
+#
+# Cluster-only (omit -f to run search into <data_dir>/<scan_name>/repos.txt):
+#   ./truffles cluster status  -c remote-playbook.yaml
+#   ./truffles cluster run     -c remote-playbook.yaml -w 4 -format csv
+#   ./truffles cluster collect -c remote-playbook.yaml
+#
+# Manage VMs:
+#   ./scripts/manage-gce-workers.sh <PROJECT> suggest|list|create|resize|…
+# If a worker OOMs / SSH dies, playbook/cluster run auto-heals when gce_* is set
+# (stop remote → gcloud reset → wait SSH → deploy). Manual:
+#   ./truffles cluster heal -c remote-playbook.yaml
+
+# Required — playbook label (used in logs / result filenames)
+name: remote
+# Not required — optional description
+description: search locally, scan on remote GCE workers
+# Not required — defaults to current user@hostname if empty
+master: localhost
+# Not required — optional dotenv for ${VAR} expansion (path relative to this YAML)
+env_file: remote.env
+# Not required — default true when any slave has gce_instance. false disables auto reset/deploy.
+auto_heal: true
+
+# Not required — parent directory for run output (default: data). TTY will ask.
+data_dir: data
+# Not required — scan name under data_dir/ (default: remote-results).
+# If data/remote-results exists, uses -1, -2, -3, … instead of overwriting.
+# Each run dir gets repos.txt, per-worker CSVs, and a combined results.csv.
+collect_out: remote-results
+
+search:
+  # Not required — optional owner (user/org). Omit for global GitHub search.
+  # Required as a pair: at least one of owner or queries must be set.
+  # With owner: local filter over that owner's repos. Without owner: search queries.
+  owner: adamsiwiec1
+  # queries:
+  #   - "*llm*"
+  # Not required — optional max repos (0 or omit = unlimited, clamped at 10000)
+  limit: 100
+  # Not required — basename for the repo URL list under <data_dir>/<scan>/ (default: repos.txt)
+  out: repos.txt
+  # Not required — optional concurrent page fetches (default: 8)
+  workers: 8
+  # Not required — optional; true skips the proxy pool (direct only)
+  no_proxy: false
+
+scan:
+  # Not required — basename under <data_dir>/<scan>/; filled after search
+  file: repos.txt
+  # Not required — optional concurrent repos per worker (default: 4).
+  # e2-standard-2 (~8GB): 3–4 is the sweet spot; each slave runs this many in parallel.
+  workers: 4
+  # Not required — optional report format: pretty | csv | jsonl
+  # On disk, pretty (.txt) and csv are both written (and both collected from workers).
+  format: csv
+  # Not required — omit/true = direct clones (default; best for parallel throughput).
+  # false = route clones through the proxy pool (often slower for large packs).
+  no_proxy: false
+  # Not required — optional master list of already-scanned repo URLs (skipped on later runs)
+  skip_file: data/scanned-repos.txt
+  # Not required — optional; append successfully scanned URLs here (often same as skip_file)
+  append_scanned: data/scanned-repos.txt
+  # Not required — optional globs skipped by trufflehog (--exclude-globs)
+  exclude_paths:
+    - node_modules
+    - vendor
+    - "*.lock"
+
+# Not required — omit slaves entirely to scan locally instead of over SSH.
+# When present, search runs here; scan runs on each enabled slave (in parallel).
+slaves:
+  - name: worker1
+    host: ${TRUFFLES_WORKER1_HOST}
+    user: ${TRUFFLES_WORKER1_USER}
+    port: 22
+    key: ${TRUFFLES_WORKER1_KEY}
+    workdir: ${TRUFFLES_WORKER1_WORKDIR}
+    truffles_path: ${TRUFFLES_WORKER1_BIN}
+    gce_instance: ${TRUFFLES_WORKER1_GCE_INSTANCE}
+    gce_zone: ${TRUFFLES_WORKER1_GCE_ZONE}
+    gce_project: ${TRUFFLES_WORKER1_GCE_PROJECT}
+    enabled: true
+
+  - name: worker2
+    host: ${TRUFFLES_WORKER2_HOST}
+    user: ${TRUFFLES_WORKER2_USER}
+    port: 22
+    key: ${TRUFFLES_WORKER2_KEY}
+    workdir: ${TRUFFLES_WORKER2_WORKDIR}
+    truffles_path: ${TRUFFLES_WORKER2_BIN}
+    gce_instance: ${TRUFFLES_WORKER2_GCE_INSTANCE}
+    gce_zone: ${TRUFFLES_WORKER2_GCE_ZONE}
+    gce_project: ${TRUFFLES_WORKER2_GCE_PROJECT}
+    enabled: true

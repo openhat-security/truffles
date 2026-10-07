@@ -70,6 +70,24 @@ func TestLocationWithoutLine(t *testing.T) {
 	}
 }
 
+func TestOpenReportSinkDualWrite(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "findings.csv")
+	s, err := openReportSink(out, "csv", "never", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	s.writeRepo("https://github.com/a/b", Result{Repo: "https://github.com/a/b"})
+	s.Close()
+	if _, err := os.Stat(filepath.Join(dir, "findings.csv")); err != nil {
+		t.Fatalf("csv missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "findings.txt")); err != nil {
+		t.Fatalf("pretty sibling missing: %v", err)
+	}
+}
+
 func TestDefaultReportName(t *testing.T) {
 	tests := []struct {
 		input, format, suffix string
@@ -91,6 +109,24 @@ func TestDefaultReportName(t *testing.T) {
 		if ts == "" || strings.ContainsAny(ts, "abcdefghijklmnopqrstuvwxyz") {
 			t.Errorf("defaultReportName(%q, %q) = %q, want a numeric suffix", tc.input, tc.format, got)
 		}
+	}
+}
+
+func TestSecretNeverUsesRedacted(t *testing.T) {
+	f := Finding{
+		Raw:      "https://user:hunter2@host/path",
+		Redacted: "https://user:********@host/path",
+	}
+	if got := f.Secret(); got != f.Raw {
+		t.Fatalf("Secret() = %q, want plaintext Raw", got)
+	}
+	f2 := Finding{RawV2: "only-v2", Redacted: "********"}
+	if got := f2.Secret(); got != "only-v2" {
+		t.Fatalf("Secret() = %q, want RawV2", got)
+	}
+	f3 := Finding{Redacted: "fallback-only"}
+	if got := f3.Secret(); got != "" {
+		t.Fatalf("Secret() = %q, want empty when only Redacted is set", got)
 	}
 }
 

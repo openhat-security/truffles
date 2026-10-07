@@ -1,13 +1,18 @@
 package cli
 
 import (
+	"bufio"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -77,11 +82,11 @@ func (f Finding) CommitLine() string {
 	return out
 }
 
-// Secret picks the best available secret text.
+// Secret returns the plaintext secret from trufflehog.
+// Never use Redacted — that field is masked (e.g. user:********@host).
+// If Raw/RawV2 themselves contain asterisks, that text came from the scanned
+// source (or trufflehog wrote stars into Raw); we do not mask on our side.
 func (f Finding) Secret() string {
-	if f.Redacted != "" {
-		return f.Redacted
-	}
 	if f.Raw != "" {
 		return f.Raw
 	}
@@ -104,6 +109,220 @@ func defaultReportName(input, format string) string {
 		stem = "truffles"
 	}
 	return fmt.Sprintf("%s-%d%s", stem, time.Now().Unix(), ext)
+}
+
+// dualReportPaths returns the on-disk pretty and csv paths for a primary -out.
+// jsonl stays single-file; pretty and csv always get a sibling of the other.
+func dualReportPaths(out, format string) (prettyPath, csvPath, jsonlPath string) {
+	stem := strings.TrimSuffix(out, filepath.Ext(out))
+	if stem == "" {
+		stem = out
+	}
+	switch format {
+	case "csv":
+		return stem + ".txt", out, ""
+	case "jsonl":
+		return "", "", out
+	default: // pretty
+		return out, stem + ".csv", ""
+	}
+}
+
+// reportSink writes findings to pretty and/or csv (and optionally jsonl).
+// When writing to disk with -format pretty or csv, both pretty and csv files
+// are opened so local collects always get a human report alongside CSV.
+type reportSink struct {
+	mu sync.Mutex
+
+	prettyPath string
+	csvPath    string
+	jsonlPath  string
+
+	prettyFile *os.File
+	csvFile    *os.File
+	jsonlFile  *os.File
+
+	pretty *bufio.Writer
+	csv    *bufio.Writer
+	jsonl  *bufio.Writer
+
+	rp       palette
+	toStdout bool
+	format   string
+}
+
+func openReportSink(out, format, colorMode string, toStdout bool) (*reportSink, error) {
+	s := &reportSink{toStdout: toStdout, format: format}
+	if toStdout {
+		dest := os.Stdout
+		s.rp = palette{resolveColor(colorMode, dest)}
+		bw := bufio.NewWriterSize(dest, 32*1024)
+		switch format {
+		case "csv":
+			s.csv = bw
+			s.csvFile = dest
+			writeCSVHeader(s.csv)
+			_ = s.csv.Flush()
+		case "jsonl":
+			s.jsonl = bw
+			s.jsonlFile = dest
+		default:
+			s.pretty = bw
+			s.prettyFile = dest
+		}
+		return s, nil
+	}
+
+	prettyPath, csvPath, jsonlPath := dualReportPaths(out, format)
+	s.prettyPath, s.csvPath, s.jsonlPath = prettyPath, csvPath, jsonlPath
+
+	open := func(path string) (*os.File, *bufio.Writer, error) {
+		f, err := os.Create(path)
+		if err != nil {
+			return nil, nil, err
+		}
+		return f, bufio.NewWriterSize(f, 32*1024), nil
+	}
+
+	if prettyPath != "" {
+		f, bw, err := open(prettyPath)
+		if err != nil {
+			return nil, err
+		}
+		s.prettyFile, s.pretty = f, bw
+		s.rp = palette{resolveColor(colorMode, f)}
+	}
+	if csvPath != "" {
+		f, bw, err := open(csvPath)
+		if err != nil {
+			s.Close()
+			return nil, err
+		}
+		s.csvFile, s.csv = f, bw
+		writeCSVHeader(s.csv)
+		_ = s.csv.Flush()
+		_ = s.csvFile.Sync()
+		if s.prettyFile == nil {
+			s.rp = palette{resolveColor(colorMode, f)}
+		}
+	}
+	if jsonlPath != "" {
+		f, bw, err := open(jsonlPath)
+		if err != nil {
+			s.Close()
+			return nil, err
+		}
+		s.jsonlFile, s.jsonl = f, bw
+		if s.prettyFile == nil && s.csvFile == nil {
+			s.rp = palette{resolveColor(colorMode, f)}
+		}
+	}
+	return s, nil
+}
+
+func (s *reportSink) paths() []string {
+	var out []string
+	for _, p := range []string{s.prettyPath, s.csvPath, s.jsonlPath} {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func (s *reportSink) flush() {
+	if s.pretty != nil {
+		_ = s.pretty.Flush()
+	}
+	if s.csv != nil {
+		_ = s.csv.Flush()
+	}
+	if s.jsonl != nil {
+		_ = s.jsonl.Flush()
+	}
+	for _, f := range []*os.File{s.prettyFile, s.csvFile, s.jsonlFile} {
+		if f != nil && f != os.Stdout {
+			_ = f.Sync()
+		}
+	}
+}
+
+func (s *reportSink) Close() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.flush()
+	closeOne := func(f **os.File) {
+		if *f != nil && *f != os.Stdout {
+			_ = (*f).Close()
+		}
+		*f = nil
+	}
+	closeOne(&s.prettyFile)
+	closeOne(&s.csvFile)
+	closeOne(&s.jsonlFile)
+	s.pretty, s.csv, s.jsonl = nil, nil, nil
+}
+
+func (s *reportSink) writeRepo(repo string, res Result) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pretty != nil {
+		renderRepo(s.pretty, s.rp, repo, res)
+	}
+	if s.csv != nil {
+		writeCSV(s.csv, res)
+	}
+	if s.jsonl != nil {
+		writeJSONL(s.jsonl, res)
+	}
+	s.flush()
+}
+
+func (s *reportSink) writeSummary(repos int, fail, findings, verified int64, elapsed time.Duration, byDetector *sync.Map) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pretty == nil {
+		return
+	}
+	rp := s.rp
+	fmt.Fprintf(s.pretty, "\n%s\n", rp.bold("=== Summary ==="))
+	fmt.Fprintf(s.pretty, "  %s %d\n", rp.dim(fmt.Sprintf("%-22s", "Repos scanned")), repos)
+	fmt.Fprintf(s.pretty, "  %s %d\n", rp.dim(fmt.Sprintf("%-22s", "Failed")), fail)
+	fmt.Fprintf(s.pretty, "  %s %d\n", rp.dim(fmt.Sprintf("%-22s", "Findings")), findings)
+	verdict := rp.yellow(fmt.Sprintf("%d unverified", findings-verified))
+	if verified > 0 {
+		verdict = rp.bgreen(fmt.Sprintf("%d verified", verified)) + ", " + verdict
+	}
+	fmt.Fprintf(s.pretty, "  %s %s\n", rp.dim(fmt.Sprintf("%-22s", "Verification")), verdict)
+	fmt.Fprintf(s.pretty, "  %s %s\n", rp.dim(fmt.Sprintf("%-22s", "Elapsed")), elapsed)
+
+	var rows []struct {
+		name string
+		n    int64
+	}
+	byDetector.Range(func(k, v any) bool {
+		rows = append(rows, struct {
+			name string
+			n    int64
+		}{k.(string), atomic.LoadInt64(v.(*int64))})
+		return true
+	})
+	if len(rows) > 0 {
+		fmt.Fprintf(s.pretty, "\n  %s\n", rp.bold("By detector"))
+		sort.Slice(rows, func(i, j int) bool {
+			if rows[i].n != rows[j].n {
+				return rows[i].n > rows[j].n
+			}
+			return rows[i].name < rows[j].name
+		})
+		for _, r := range rows {
+			fmt.Fprintf(s.pretty, "    %s %s\n", pad(r.name, 30), rp.cyan(fmt.Sprintf("%d", r.n)))
+		}
+	}
+	s.flush()
 }
 
 type Result struct {

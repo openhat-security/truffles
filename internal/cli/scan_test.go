@@ -8,6 +8,38 @@ import (
 	"testing"
 )
 
+func TestProxyChildEnvStripsInherited(t *testing.T) {
+	t.Setenv("HTTP_PROXY", "http://stale:1")
+	t.Setenv("https_proxy", "http://stale:2")
+	env := proxyChildEnv(nil)
+	for _, e := range env {
+		key, _, _ := strings.Cut(e, "=")
+		switch strings.ToLower(key) {
+		case "http_proxy", "https_proxy", "all_proxy":
+			t.Fatalf("direct env still has %s", key)
+		}
+	}
+}
+
+func TestKilledBySignalAndMessage(t *testing.T) {
+	if killedBySignal(nil) || killedBySignal(exec.ErrNotFound) {
+		t.Fatal("nil/ErrNotFound should not be killedBySignal")
+	}
+	cmd := exec.Command("sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	_ = cmd.Process.Kill()
+	err := cmd.Wait()
+	if !killedBySignal(err) {
+		t.Fatalf("killedBySignal(%v) = false", err)
+	}
+	got := scanError(err, nil)
+	if got == nil || !strings.Contains(got.Error(), "killed") {
+		t.Fatalf("scanError = %v, want it to mention killed", got)
+	}
+}
+
 func TestPermanentScanError(t *testing.T) {
 	tests := []struct {
 		name   string

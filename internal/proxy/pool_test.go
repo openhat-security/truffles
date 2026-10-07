@@ -119,6 +119,41 @@ func TestNextRespectsPacing(t *testing.T) {
 	}
 }
 
+func TestProxyBusyHoldsUntilRelease(t *testing.T) {
+	// No direct member — only one proxy. Busy must block Next until release.
+	p := NewPool(1, 1, false, false, quiet)
+	pr := newProxy("1.2.3.4:8080")
+	p.mu.Lock()
+	p.live = append(p.live, pr)
+	p.mu.Unlock()
+
+	release := pr.Busy()
+	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	defer cancel()
+	got := p.Next(ctx, time.Millisecond)
+	if got != nil {
+		t.Fatalf("Next during Busy returned %v, want nil (ctx timeout)", got)
+	}
+	release()
+	got = p.Next(context.Background(), time.Millisecond)
+	if got == nil || got.Addr() != "1.2.3.4:8080" {
+		t.Fatalf("Next after release = %v, want proxy 1.2.3.4:8080", got)
+	}
+}
+
+func TestProxyURL(t *testing.T) {
+	if newDirectProxy().ProxyURL() != "" {
+		t.Error("direct ProxyURL should be empty")
+	}
+	if got := newProxy("1.2.3.4:8080").ProxyURL(); got != "http://1.2.3.4:8080" {
+		t.Fatalf("ProxyURL = %q", got)
+	}
+	var nilP *Proxy
+	if nilP.ProxyURL() != "" {
+		t.Error("nil ProxyURL should be empty")
+	}
+}
+
 func TestDirectAddrIsNotMistakenForAProxy(t *testing.T) {
 	d := newDirectProxy()
 	if !d.IsDirect() {

@@ -62,6 +62,7 @@ type Proxy struct {
 	mu     sync.Mutex
 	nextAt time.Time
 	broken bool
+	busy   bool // held across long work (git clone); Next skips until release
 }
 
 // wait blocks until this proxy's pacing interval has elapsed, then claims
@@ -92,6 +93,36 @@ func (p *Proxy) retire() {
 	p.mu.Lock()
 	p.broken = true
 	p.mu.Unlock()
+}
+
+// Busy holds this proxy out of Pool.Next until the returned release func runs.
+// Use around long-lived work (e.g. a git clone) so the same IP is not handed
+// to another worker mid-transfer.
+func (p *Proxy) Busy() (release func()) {
+	if p == nil {
+		return func() {}
+	}
+	p.mu.Lock()
+	p.busy = true
+	p.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			p.mu.Lock()
+			p.busy = false
+			p.nextAt = time.Now()
+			p.mu.Unlock()
+		})
+	}
+}
+
+// ProxyURL is the http://host:port form for subprocess env (HTTP_PROXY etc).
+// Empty when this member is the local machine.
+func (p *Proxy) ProxyURL() string {
+	if p == nil || p.direct {
+		return ""
+	}
+	return "http://" + p.addr
 }
 
 // PoolStats is the live health snapshot for reporting.
@@ -262,8 +293,9 @@ func (p *Pool) Next(ctx context.Context, interval time.Duration) *Proxy {
 			pr.mu.Lock()
 			at := pr.nextAt
 			broken := pr.broken
+			busy := pr.busy
 			pr.mu.Unlock()
-			if broken {
+			if broken || busy {
 				continue
 			}
 			if pr.direct {
@@ -285,10 +317,36 @@ func (p *Pool) Next(ctx context.Context, interval time.Duration) *Proxy {
 			best, bestAt = bestDirect, bestDirectAt
 		}
 		if best == nil {
-			// Everything is retired; drop them all.
-			p.live = nil
+			// No free member: either every live proxy is Busy, or every
+			// entry is retired. Busy members must stay in the set — wiping
+			// them would strand a git clone that still holds the release.
+			alive := 0
+			for _, pr := range p.live {
+				pr.mu.Lock()
+				if !pr.broken {
+					alive++
+				}
+				pr.mu.Unlock()
+			}
+			if alive == 0 {
+				p.live = nil
+				p.mu.Unlock()
+				return nil
+			}
 			p.mu.Unlock()
-			return nil
+			if waitingSince.IsZero() {
+				waitingSince = time.Now()
+			}
+			p.noteWaiting(alive, time.Since(waitingSince).Round(time.Second))
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(50 * time.Millisecond):
+			}
+			if time.Now().After(deadline) {
+				return nil
+			}
+			continue
 		}
 		alive := len(p.live)
 		p.mu.Unlock()

@@ -55,7 +55,7 @@ func runPlaybookTouch(rest []string) error {
 	pb.Search.Limit = 50
 	pb.Search.NoProxy = true
 	pb.Scan.File = "repos-example.txt"
-	pb.Scan.Format = "pretty"
+	pb.Scan.Format = "csv"
 	pb.Scan.ExcludePaths = []string{"node_modules", "vendor", "*.lock"}
 
 	if err := writePlaybook(pb, out); err != nil {

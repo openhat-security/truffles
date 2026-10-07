@@ -1,0 +1,78 @@
+# Horizontal scan parallelism: search locally, split repos across N GCE workers
+# that scan concurrently (cluster run fans out SSH in parallel).
+#
+# Setup:
+#   ./scripts/manage-gce-workers.sh PROJECT create --count 2 --machine e2-standard-2
+#   ./scripts/manage-gce-workers.sh PROJECT env truffles-worker-1 1 >> examples/remote-multi.env
+#   ./scripts/manage-gce-workers.sh PROJECT env truffles-worker-2 2 >> examples/remote-multi.env
+#   ./truffles cluster deploy -c examples/playbook.remote-multi.yaml
+#   ./truffles playbook -f examples/playbook.remote-multi.yaml
+#
+# Throughput scales with slave count × per-slave scan.workers, not with a bigger
+# proxy pool. Scan defaults to direct clones (no_proxy: true).
+
+name: remote-multi
+description: search once, scan in parallel on multiple GCE workers
+master: localhost
+env_file: remote-multi.env
+auto_heal: true
+
+search:
+  queries:
+    - "*llm*"
+  limit: 100
+  out: remote-multi-repos.txt
+  workers: 8
+  no_proxy: false
+
+scan:
+  file: remote-multi-repos.txt
+  # Per-slave concurrent clones. On e2-standard-2 use 3–4; on e2-small use 2.
+  workers: 3
+  format: csv
+  no_proxy: true
+  skip_file: data/scanned-repos.txt
+  append_scanned: data/scanned-repos.txt
+  exclude_paths:
+    - node_modules
+    - vendor
+    - "*.lock"
+
+collect_out: remote-multi-results
+
+slaves:
+  - name: worker1
+    host: ${TRUFFLES_WORKER1_HOST}
+    user: ${TRUFFLES_WORKER1_USER}
+    port: 22
+    key: ${TRUFFLES_WORKER1_KEY}
+    workdir: ${TRUFFLES_WORKER1_WORKDIR}
+    truffles_path: ${TRUFFLES_WORKER1_BIN}
+    gce_instance: ${TRUFFLES_WORKER1_GCE_INSTANCE}
+    gce_zone: ${TRUFFLES_WORKER1_GCE_ZONE}
+    gce_project: ${TRUFFLES_WORKER1_GCE_PROJECT}
+    enabled: true
+
+  - name: worker2
+    host: ${TRUFFLES_WORKER2_HOST}
+    user: ${TRUFFLES_WORKER2_USER}
+    port: 22
+    key: ${TRUFFLES_WORKER2_KEY}
+    workdir: ${TRUFFLES_WORKER2_WORKDIR}
+    truffles_path: ${TRUFFLES_WORKER2_BIN}
+    gce_instance: ${TRUFFLES_WORKER2_GCE_INSTANCE}
+    gce_zone: ${TRUFFLES_WORKER2_GCE_ZONE}
+    gce_project: ${TRUFFLES_WORKER2_GCE_PROJECT}
+    enabled: true
+
+  - name: worker3
+    host: ${TRUFFLES_WORKER3_HOST}
+    user: ${TRUFFLES_WORKER3_USER}
+    port: 22
+    key: ${TRUFFLES_WORKER3_KEY}
+    workdir: ${TRUFFLES_WORKER3_WORKDIR}
+    truffles_path: ${TRUFFLES_WORKER3_BIN}
+    gce_instance: ${TRUFFLES_WORKER3_GCE_INSTANCE}
+    gce_zone: ${TRUFFLES_WORKER3_GCE_ZONE}
+    gce_project: ${TRUFFLES_WORKER3_GCE_PROJECT}
+    enabled: false

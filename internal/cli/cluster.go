@@ -13,9 +13,17 @@ import (
 )
 
 type Cluster struct {
-	Name   string  `yaml:"name"`
-	Master string  `yaml:"master"` // defaults to current user@hostname if empty
-	Slaves []Slave `yaml:"slaves"`
+	Name    string  `yaml:"name"`
+	Master  string  `yaml:"master"` // defaults to current user@hostname if empty
+	Slaves  []Slave `yaml:"slaves"`
+	EnvFile string  `yaml:"env_file"` // optional dotenv loaded before ${VAR} expansion
+	// DataDir is the parent directory for run output (default: data).
+	DataDir string `yaml:"data_dir"`
+	// CollectOut is the scan name under DataDir for `cluster run` / collect.
+	CollectOut string `yaml:"collect_out"`
+	// AutoHeal: when true (default if any slave has gce_instance), unreachable
+	// workers trigger stop→reset→deploy before / during remote scan.
+	AutoHeal *bool `yaml:"auto_heal"`
 }
 
 type Slave struct {
@@ -26,8 +34,14 @@ type Slave struct {
 	Key          string `yaml:"key"` // identity file path
 	WorkDir      string `yaml:"workdir"`
 	TrufflesPath string `yaml:"truffles_path"` // path to truffles binary on remote (or "truffles" in PATH)
-	Tags         []string
-	Enabled      bool `yaml:"enabled"`
+	// Optional GCE identity for `cluster reset` / `cluster heal`.
+	GCEInstance string `yaml:"gce_instance"`
+	GCEZone     string `yaml:"gce_zone"`
+	GCEProject  string `yaml:"gce_project"`
+	// GOARCH for cross-compile deploy (default amd64).
+	Arch    string   `yaml:"arch"`
+	Tags    []string `yaml:"tags"`
+	Enabled bool     `yaml:"enabled"`
 }
 
 func defaultClusterName() string {
@@ -81,6 +95,12 @@ func loadCluster(path string) (*Cluster, error) {
 	if err := yaml.Unmarshal(b, &c); err != nil {
 		return nil, err
 	}
+	if ef := resolveEnvFile(path, c.EnvFile); ef != "" {
+		if err := loadEnvFile(ef); err != nil {
+			return nil, fmt.Errorf("env_file %s: %w", ef, err)
+		}
+	}
+	expandCluster(&c)
 	if c.Master == "" {
 		c.Master = currentUserHost()
 	}
@@ -88,7 +108,20 @@ func loadCluster(path string) (*Cluster, error) {
 }
 
 func sshCmd(sl Slave, cmd string) *exec.Cmd {
-	args := []string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=30", "-o", "StrictHostKeyChecking=no"}
+	return sshCmdConnect(sl, cmd, 30)
+}
+
+func sshCmdConnect(sl Slave, cmd string, connectTimeoutSec int) *exec.Cmd {
+	if connectTimeoutSec < 1 {
+		connectTimeoutSec = 30
+	}
+	args := []string{
+		"-o", "BatchMode=yes",
+		"-o", fmt.Sprintf("ConnectTimeout=%d", connectTimeoutSec),
+		"-o", "ServerAliveInterval=5",
+		"-o", "ServerAliveCountMax=3",
+		"-o", "StrictHostKeyChecking=no",
+	}
 	if sl.Port > 0 {
 		args = append(args, "-p", fmt.Sprintf("%d", sl.Port))
 	}
@@ -101,6 +134,41 @@ func sshCmd(sl Slave, cmd string) *exec.Cmd {
 	}
 	args = append(args, target, cmd)
 	return exec.Command("ssh", args...)
+}
+
+func slaveWorkDir(sl Slave) string {
+	if sl.WorkDir != "" {
+		return sl.WorkDir
+	}
+	return "~/truffles-work"
+}
+
+// ensureRemoteWorkDir creates the slave workdir over SSH (scp cannot mkdir parents).
+func ensureRemoteWorkDir(sl Slave) error {
+	wd := slaveWorkDir(sl)
+	cmd := sshCmdConnect(sl, "mkdir -p "+shellSingleQuote(wd), 15)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg != "" {
+			return fmt.Errorf("mkdir workdir %s: %w\n%s", wd, err, msg)
+		}
+		return fmt.Errorf("mkdir workdir %s: %w", wd, err)
+	}
+	return nil
+}
+
+func runScpTo(sl Slave, local, remote string) error {
+	cmd := scpTo(sl, local, remote)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg != "" {
+			return fmt.Errorf("%w\n%s", err, msg)
+		}
+		return err
+	}
+	return nil
 }
 
 func scpTo(sl Slave, local, remote string) *exec.Cmd {
