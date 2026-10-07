@@ -279,10 +279,11 @@ through the reordering.
 - **Free proxies are genuinely unreliable.** ~4% yield with 58% 45-second
   half-life. `-token` is strictly better; the pool is for when you have none.
 - **Scan throughput is clone-bound.** ~90% of a scan is
-  `git clone --mirror` of the full history. `-workers` past 4 buys nothing
-  (measured 5m22s at `-w 4` vs 5m20s at `-w 12`) and mainly multiplies peak disk
-  usage. trufflehog exposes no shallow or treeless clone, so the only way past
-  it is giving up history.
+  `git clone --mirror` of the full history. On one host, `-workers` past ~4
+  mostly multiplies peak disk/RAM (measured 5m22s at `-w 4` vs 5m20s at `-w 12`).
+  Horizontal scale wins: `cluster run` splits the repo list and SSHes all slaves
+  in parallel. Scan defaults to direct clones (`-no-proxy`); free proxies help
+  search rate limits, not multi-GB packs.
 - **Test coverage is partial.** Parsing, reporting, flag handling, proxy
   selection and error extraction are unit tested offline; the orchestration and
   retry paths around live GitHub and trufflehog are still verified empirically.
