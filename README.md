@@ -6,11 +6,14 @@
 
 **Find GitHub repos at scale. Scan every commit. Catch leaked secrets.**
 
+Website: **[truffles.devrecated.com](https://truffles.devrecated.com)** · Org: [openhat-security](https://github.com/openhat-security)
+
 Enumerate owners or search globally (with a proxy pool for rate limits), filter by glob or regex, then scan full git history with [trufflehog](https://github.com/trufflesecurity/trufflehog). Or write a YAML playbook and run both steps in one shot.
 
 [![CI](https://github.com/openhat-security/truffles/actions/workflows/ci.yml/badge.svg)](https://github.com/openhat-security/truffles/actions/workflows/ci.yml)
 [![Go](https://img.shields.io/badge/go-1.24%2B-blue)](https://go.dev)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Website](https://img.shields.io/badge/website-truffles.devrecated.com-orange)](https://truffles.devrecated.com)
 
 <p align="center">
   <img src="assets/screenshots/quickstart.gif" alt="truffles — search openhat-security, filter with *run*, author a playbook in vim, run it" width="100%"/>
@@ -52,6 +55,10 @@ Requires [`trufflehog`](https://github.com/trufflesecurity/trufflehog) on `PATH`
 # or: author a playbook and run both steps
 vim playbook.yaml
 ./truffles playbook -f playbook.yaml
+
+# GCE scan workers (size suggestions, create/list/resize):
+./scripts/manage-gce-workers.sh YOUR_PROJECT suggest
+./scripts/manage-gce-workers.sh YOUR_PROJECT create --count 2 --machine e2-standard-2
 ```
 
 ```bash
