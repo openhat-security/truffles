@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-labelledby="title desc">
-  <title id="title">truffles  Find repos at scale. Scan every commit. Catch leaked secrets.</title>
+  <title id="title">truffles — Find repos at scale. Scan every commit. Catch leaked secrets.</title>
   <desc id="desc">Hero art for truffles: search GitHub at scale, scan history with trufflehog, run playbooks.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
@@ -77,9 +77,9 @@
       <text x="28" y="96" fill="#fb923c" xml:space="preserve">|_   _|  _ \| | | |  ___|  ___| |   | ____/ ___|</text>
       <text x="28" y="114" fill="#fb923c" xml:space="preserve">  | | | |_) | | | | |_  | |_  | |   |  _| \___ \</text>
       <text x="28" y="132" fill="#fb923c" xml:space="preserve">  | | |  _ &lt;| |_| |  _| |  _| | |___| |___ ___) |</text>
-      <text x="28" y="150" fill="#fb923c" xml:space="preserve">  |_| |_| \_\\___/|_|   |_|   |_____|_____|____/</text>
+      <text x="28" y="150" fill="#fb923c" xml:space="preserve">  |_| |_| \_\___/|_|   |_|   |_____|_____|____/</text>
 
-      <text x="28" y="186"><tspan fill="#f8fafc" font-weight="700">truffles</tspan><tspan fill="#94a3b8">  find · filter · scan for secrets</tspan></text>
+      <text x="28" y="186"><tspan fill="#f8fafc" font-weight="700">truffles</tspan><tspan fill="#94a3b8"> — find · filter · scan for secrets</tspan></text>
 
       <text x="28" y="222" fill="#64748b">Usage:</text>
       <text x="28" y="244" xml:space="preserve">  truffles &lt;command&gt; [flags]</text>
@@ -91,7 +91,7 @@
       <text x="28" y="360" xml:space="preserve">  scan      trufflehog full-history</text>
 
       <text x="28" y="396" fill="#fdba74" font-weight="700">playbook</text>
-      <text x="28" y="418" xml:space="preserve">  playbook  YAML search ’ scan</text>
+      <text x="28" y="418" xml:space="preserve">  playbook  YAML search then scan</text>
 
       <text x="28" y="460" fill="#64748b">$</text>
       <text x="44" y="460" fill="#e2e8f0">truffles search -owner openhat-security '*run*'</text>
