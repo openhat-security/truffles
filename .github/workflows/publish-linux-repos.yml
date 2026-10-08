@@ -61,6 +61,16 @@ jobs:
           token: ${{ secrets.PACKAGING_TOKEN }}
           path: packages-repo
 
+      - name: Update packages repo
+        if: env.skip != '1'
+        working-directory: packages-repo
+        run: |
+          set -euo pipefail
+          git config user.name "truffles-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout main
+          git pull --ff-only origin main
+
       - name: Merge truffles into apt + dnf site
         if: env.skip != '1'
         run: bash packaging/repo/build-pages-repos.sh --merge --product truffles /tmp/pkgs packages-repo
@@ -74,8 +84,6 @@ jobs:
           set -euo pipefail
           git config user.name "truffles-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout main
-          git pull --rebase origin main || true
           touch .nojekyll
           git add -A
           if git diff --cached --quiet; then
