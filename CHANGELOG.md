@@ -1,5 +1,10 @@
 ## [Unreleased]
 
+### Fixed
+- Release workflow checks out the tagged commit on workflow_dispatch
+- GoReleaser can republish Homebrew/Scoop without re-uploading GitHub Release assets
+- Linux packages publish pulls `main` before merge
+
 ## [1.0.14] - 2026-10-07
 
 ### Added

@@ -43,11 +43,10 @@ jobs:
         with:
           distribution: goreleaser
           version: "~> v2"
-          args: >-
-            release --clean
-            ${{ github.event_name == 'workflow_dispatch' && inputs.republish_channels && inputs.tag != '' && '--skip=publish' || '' }}
+          args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_SKIP_UPLOAD: ${{ github.event_name == 'workflow_dispatch' && inputs.republish_channels && inputs.tag != '' && 'true' || '' }}
           # Do not fall back to GITHUB_TOKEN — it cannot write to homebrew-tap / scoop-bucket.
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN || secrets.PACKAGING_TOKEN }}
           SCOOP_TOKEN: ${{ secrets.SCOOP_TOKEN || secrets.PACKAGING_TOKEN }}

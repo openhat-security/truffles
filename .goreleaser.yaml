@@ -58,6 +58,8 @@ release:
   draft: false
   prerelease: auto
   name_template: "v{{.Version}}"
+  # Set RELEASE_SKIP_UPLOAD=true to push brew/scoop without re-uploading GitHub assets.
+  skip_upload: '{{ eq .Env.RELEASE_SKIP_UPLOAD "true" }}'
 
 nfpms:
   - id: packages
