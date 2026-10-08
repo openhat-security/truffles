@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [1.0.15] - 2026-10-08
+
 ### Fixed
 - Release workflow checks out the tagged commit on workflow_dispatch
 - GoReleaser can republish Homebrew/Scoop without re-uploading GitHub Release assets
