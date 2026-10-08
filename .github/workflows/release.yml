@@ -15,6 +15,11 @@ on:
         required: false
         type: boolean
         default: true
+      republish_channels:
+        description: "Re-push brew/scoop only (skip GitHub Release upload; requires tag)"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -38,7 +43,9 @@ jobs:
         with:
           distribution: goreleaser
           version: "~> v2"
-          args: release --clean
+          args: >-
+            release --clean
+            ${{ github.event_name == 'workflow_dispatch' && inputs.republish_channels && inputs.tag != '' && '--skip=publish' || '' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Do not fall back to GITHUB_TOKEN — it cannot write to homebrew-tap / scoop-bucket.
