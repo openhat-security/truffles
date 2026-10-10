@@ -96,6 +96,12 @@ func runScan(args []string) error {
 		fmt.Fprintf(os.Stderr, format+"\n", a...)
 	}
 
+	scanTokens := splitAuthTokens(*token)
+	tokenPicker := newTokenRing(scanTokens)
+	if len(scanTokens) > 0 {
+		statusf("%s", sp.dim(fmt.Sprintf("[*] using %d GitHub token(s) for git clone (round-robin)", len(scanTokens))))
+	}
+
 	reportPath := *out
 	toStdout := reportPath == "-"
 	if reportPath == "" {
@@ -232,7 +238,7 @@ func runScan(args []string) error {
 			for repo := range ch {
 				atomic.AddInt64(&inFlight, 1)
 				res := scanRepo(ctx, *trufflehogBin, repo, scanOptions{
-					token: *token, results: *results, jsonOut: *jsonOut,
+					token: tokenPicker.next(), results: *results, jsonOut: *jsonOut,
 					noVerify: *noVerify, maxDepth: *maxDepth, excludePaths: *excludePaths,
 					pool: pool, verbose: *verbose, logf: logf,
 				})

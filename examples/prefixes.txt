@@ -1,0 +1,72 @@
+# Common API / token prefixes for GitHub code search (one per line).
+# Used with: truffles search -prefix-file examples/prefixes.txt
+# Each line becomes: "<prefix>" in:file  (via /search/code)
+# Use short literals only — never put full secrets in this file.
+#
+# Last verified: 2026-10-10 (vendor docs + trufflesecurity/trufflehog main @ trufflehog 3.99.0).
+# TruffleHog is an external binary at scan time — not bundled in this repo.
+
+# GitHub (TruffleHog github/v2: ghp_, github_pat_, gho_, ghu_, ghs_, ghr_)
+ghp_
+github_pat_
+gho_
+ghu_
+ghs_
+ghr_
+
+# OpenAI — TruffleHog openai: sk-proj-, sk-svcacct-|sk-service-, legacy sk-…T3BlbkFJ…
+# sk- alone is NOT OpenAI-specific (DeepSeek, OpenRouter, test strings, etc.).
+sk-proj-
+sk-svcacct-
+sk-service-
+# Administration API only (TruffleHog openaiadmin); not for model calls.
+sk-admin-
+
+# Anthropic — TruffleHog anthropic: sk-ant-api03-…, sk-ant-admin01-…
+sk-ant-api03-
+sk-ant-admin01-
+# Broader Anthropic family (noisier on GitHub than api03-/admin01-):
+# sk-ant-
+
+# Google API keys (TruffleHog googlegemini: AIzaSy…)
+AIzaSy
+
+# AWS long-lived + STS session key IDs (TruffleHog aws: AKIA…, ASIA…)
+AKIA
+ASIA
+
+# Pinecone (TruffleHog pinecone: pcsk_…)
+pcsk_
+
+# Slack bot / user / workspace tokens (TruffleHog slack: xoxb-, xoxp-, xoxa-, xoxr-)
+xoxb-
+xoxp-
+xoxa-
+xoxr-
+# Slack app-level config token (Slack docs: xapp-…; not in TruffleHog slack scanner today):
+# xapp-
+
+# Stripe — underscores, not hyphens (TruffleHog stripe live: [rs]k_live_…; test/publishable: vendor docs)
+sk_live_
+sk_test_
+rk_live_
+rk_test_
+pk_live_
+pk_test_
+
+# SendGrid (TruffleHog: SG.{20-24}.{39-50})
+SG.
+
+# Hugging Face (TruffleHog: hf_… / api_org_…)
+hf_
+api_org_
+
+# Cohere — community-observed co_…; no dedicated TruffleHog detector (noisy on GitHub):
+# co_
+
+# Replicate (TruffleHog: r8_…)
+r8_
+
+# Twilio SIDs are AC… / SK… + 32 hex — too noisy as bare "AC" or "SK" for code search; rely on scan.
+
+# Mailgun uses key-{32} among other shapes — "key-" alone matches unrelated strings.

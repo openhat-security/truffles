@@ -36,6 +36,10 @@ From repo root:
 # Global search + scan
 ./examples/search-scan.sh "llm"
 
+# Prefix-driven GitHub *code* search (then scan)
+./truffles search -prefix-file examples/prefixes.txt -limit 500 -out repos.txt
+./truffles search -prefix-file examples/prefixes-providers.example.txt -limit 300 -out provider-repos.txt
+
 # Owner enumeration + scan (with optional patterns)
 ./examples/owner-scan.sh openhat-security '*run*'
 ./examples/owner-scan.sh openhat-security

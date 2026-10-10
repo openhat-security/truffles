@@ -1,0 +1,7 @@
+# Keep Agent off local scan artifacts and build output.
+bin/
+dist/
+data/
+.git/
+node_modules/
+.cursor/local/

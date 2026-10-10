@@ -1,0 +1,7 @@
+# Semantic index only. Same heavy trees as .cursorignore.
+bin/
+dist/
+data/
+.git/
+node_modules/
+.cursor/local/

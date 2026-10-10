@@ -55,6 +55,7 @@ func srcName(s srcSpec) string {
 type srcSpec struct {
 	key   string // owner name, or searchSrc
 	query string // non-empty => global search
+	code  bool   // query uses /search/code instead of /search/repositories
 }
 
 type Repo struct {
@@ -187,6 +188,48 @@ func fetchSearchPage(client *http.Client, query string, page int, token string) 
 	return sr.Items, total, nil
 }
 
+type codeSearchItem struct {
+	Repository Repo `json:"repository"`
+}
+
+type codeSearchResult struct {
+	TotalCount int              `json:"total_count"`
+	Items      []codeSearchItem `json:"items"`
+}
+
+// fetchCodeSearchPage queries the code index and returns unique repos from file hits.
+func fetchCodeSearchPage(client *http.Client, query string, page int, token string) ([]Repo, int, error) {
+	apiURL := fmt.Sprintf("https://api.github.com/search/code?q=%s&per_page=%d&page=%d",
+		url.QueryEscape(query), perPage, page)
+	resp, err := doGitHub(client, apiURL, token, "code search failed")
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+
+	var sr codeSearchResult
+	if err := json.NewDecoder(resp.Body).Decode(&sr); err != nil {
+		return nil, 0, err
+	}
+
+	repos := make([]Repo, 0, len(sr.Items))
+	seen := map[string]bool{}
+	for _, it := range sr.Items {
+		u := it.Repository.HTMLURL
+		if u == "" || seen[u] {
+			continue
+		}
+		seen[u] = true
+		repos = append(repos, it.Repository)
+	}
+
+	total := (sr.TotalCount + perPage - 1) / perPage
+	if total == 0 {
+		total = 1
+	}
+	return repos, total, nil
+}
+
 // multiFlag collects a repeatable flag into a slice.
 type multiFlag []string
 
@@ -268,7 +311,8 @@ func runSearch(args []string) error {
 	limit := fs.Int("limit", 0, fmt.Sprintf("Max results to output, max %d (0 = no limit)", maxResults))
 	retries := fs.Int("retries", 4, "Attempts per page before giving up")
 	noProxy := fs.Bool("no-proxy", false, "Connect directly, skipping the proxy pool")
-	token := fs.String("token", "", "GitHub token (raises rate limits)")
+	var authTokens multiFlag
+	fs.Var(&authTokens, "token", "GitHub token(s); repeat or comma-separate — round-robin per request")
 	useRegex := fs.Bool("regex", false, "Treat patterns as regexes instead of globs")
 	poolSize := fs.Int("pool-size", proxy.DefaultPoolSize, "Target number of validated proxies")
 	probePar := fs.Int("probe-par", proxy.DefaultProbePar, "Concurrent proxy validation probes")
@@ -281,6 +325,7 @@ func runSearch(args []string) error {
 	filter := fs.String("filter", "", "Extra local glob/regex filter applied in global mode")
 	var queries multiFlag
 	fs.Var(&queries, "q", "GitHub search query; repeatable. Without -owner, positionals are used as queries")
+	prefixFile := fs.String("prefix-file", "", "File of API key prefixes (one per line); each runs a GitHub code search")
 	var owners multiFlag
 	fs.Var(&owners, "owner", "GitHub user/org (repeatable, comma-separated). Omit to search globally")
 	if err := parseFlags(fs, args); err != nil {
@@ -294,10 +339,11 @@ func runSearch(args []string) error {
 	// Positional args are always patterns; owner comes only from -owner.
 	patterns := fs.Args()
 
-	if len(owners) == 0 && len(patterns) == 0 && len(queries) == 0 {
-		return fmt.Errorf("nothing to search — pass -owner, a pattern, or -q\n" +
+	if len(owners) == 0 && len(patterns) == 0 && len(queries) == 0 && *prefixFile == "" {
+		return fmt.Errorf("nothing to search — pass -owner, a pattern, -q, or -prefix-file\n" +
 			"  e.g. search -owner BurntSushi '*llm*'\n" +
-			"  e.g. search 'llm' -limit 100")
+			"  e.g. search 'llm' -limit 100\n" +
+			"  e.g. search -prefix-file examples/prefixes.txt -limit 500")
 	}
 
 	// In owner mode a pattern is a local filter over that owner's repos.
@@ -320,6 +366,7 @@ func runSearch(args []string) error {
 
 	// Global queries: explicit -q wins, else one query per positional.
 	var searchQueries []string
+	var codeQueries map[string]bool
 	if globalMode {
 		searchQueries = queries
 		if len(searchQueries) == 0 {
@@ -331,13 +378,26 @@ func runSearch(args []string) error {
 				}
 			}
 		}
-		if len(searchQueries) == 0 {
-			return fmt.Errorf("no usable search query: pass -q <term>")
+		if *prefixFile != "" {
+			prefixes, err := loadPrefixFile(*prefixFile)
+			if err != nil {
+				return err
+			}
+			codeQueries = codeQuerySet(prefixes)
+			searchQueries = mergePrefixQueries(searchQueries, prefixes)
+			fmt.Fprintf(os.Stderr, "[+] loaded %d prefix(es) from %s → %d code search queries\n",
+				len(prefixes), *prefixFile, len(codeQueries))
 		}
-		if *token == "" {
-			fmt.Fprintf(os.Stderr, "[!] repo search is 10 req/min per IP unauthenticated — pass -token\n")
+		if len(searchQueries) == 0 {
+			return fmt.Errorf("no usable search query: pass -q <term> or -prefix-file")
+		}
+		if len(authTokens) == 0 {
+			fmt.Fprintf(os.Stderr, "[!] GitHub search is 10 req/min per IP unauthenticated — pass -token\n")
 		}
 	}
+
+	tokens := splitAuthTokens(authTokens...)
+	tokenPicker := newTokenRing(tokens)
 
 	if *limit < 0 {
 		return fmt.Errorf("-limit must be >= 0 (got %d)", *limit)
@@ -366,6 +426,9 @@ func runSearch(args []string) error {
 	defer buf.Flush()
 
 	logf := func(f string, a ...any) { fmt.Fprintf(os.Stderr, f+"\n", a...) }
+	if len(tokens) > 1 {
+		logf("[+] using %d GitHub tokens (round-robin with proxy pool)", len(tokens))
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -435,11 +498,14 @@ func runSearch(args []string) error {
 	fetchPageOf := func(src srcSpec, page int) ([]Repo, int, string, error) {
 		if src.query != "" {
 			return withRetries(proxy.SearchInterval, func(c *http.Client) ([]Repo, int, error) {
-				return fetchSearchPage(c, src.query, page, *token)
+				if src.code {
+					return fetchCodeSearchPage(c, src.query, page, tokenPicker.next())
+				}
+				return fetchSearchPage(c, src.query, page, tokenPicker.next())
 			})
 		}
 		return withRetries(proxy.CoreInterval, func(c *http.Client) ([]Repo, int, error) {
-			return fetchPage(c, src.key, page, *token)
+			return fetchPage(c, src.key, page, tokenPicker.next())
 		})
 	}
 
@@ -530,19 +596,35 @@ func runSearch(args []string) error {
 		}()
 	}
 
+	seenURL := map[string]bool{}
+	var seenMu sync.Mutex
+
 	emit := func(repos []Repo) {
 		for _, r := range repos {
 			if *limit > 0 && matched.Load() >= int64(*limit) {
 				truncated = true
 				return
 			}
-			if matches(r.Name) {
-				fmt.Fprintln(buf, r.HTMLURL)
-				n := matched.Add(1)
-				if n%flushEvery == 0 {
-					buf.Flush()
-					reportProgress(false)
-				}
+			if !matches(r.Name) {
+				continue
+			}
+			u := r.HTMLURL
+			if u == "" {
+				continue
+			}
+			seenMu.Lock()
+			if seenURL[u] {
+				seenMu.Unlock()
+				continue
+			}
+			seenURL[u] = true
+			seenMu.Unlock()
+
+			fmt.Fprintln(buf, u)
+			n := matched.Add(1)
+			if n%flushEvery == 0 {
+				buf.Flush()
+				reportProgress(false)
 			}
 		}
 	}
@@ -553,7 +635,11 @@ func runSearch(args []string) error {
 		// One source per query: this is what gives -workers real work and
 		// spreads the 10 req/min limit across distinct proxy IPs.
 		for i, q := range searchQueries {
-			sources = append(sources, srcSpec{key: fmt.Sprintf("%s#%d", searchSrc, i), query: q})
+			src := srcSpec{key: fmt.Sprintf("%s#%d", searchSrc, i), query: q}
+			if codeQueries != nil && codeQueries[q] {
+				src.code = true
+			}
+			sources = append(sources, src)
 		}
 	} else {
 		for _, o := range owners {
@@ -599,8 +685,12 @@ func runSearch(args []string) error {
 
 			calls.Add(1)
 			if src.query != "" {
-				logf("[*] query %q — %d results indexed, %d page(s) (max 1000 reachable), page 1 via %s",
-					src.query, totalPages*perPage, totalPages, via1)
+				kind := "repo"
+				if src.code {
+					kind = "code"
+				}
+				logf("[*] %s query %q — ~%d hits, %d page(s) (max 1000 reachable), page 1 via %s",
+					kind, src.query, totalPages*perPage, totalPages, via1)
 			} else {
 				logf("[*] enumerating %s (%d pages, first page via %s)", src.key, totalPages, via1)
 			}

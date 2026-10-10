@@ -1,0 +1,90 @@
+# Example prefix list — LLM + payment providers (copy and trim for your hunt).
+#
+# Usage:
+#   truffles search -prefix-file examples/prefixes-providers.example.txt \
+#     -token "$GITHUB_TOKEN" -out data/provider-hunt/repos.txt -limit 300
+#   truffles scan -f data/provider-hunt/repos.txt
+#
+# Each non-comment line → GitHub code search: "<prefix>" in:file
+# Prefixes only — never full secrets.
+#
+# Last verified: 2026-10-10 (vendor docs + trufflesecurity/trufflehog main @ trufflehog 3.99.0).
+
+# --- OpenAI ---
+sk-proj-
+sk-svcacct-
+sk-service-
+sk-admin-
+# sk-live- / sk-test- are NOT OpenAI (Stripe uses sk_live_ / sk_test_ with underscores).
+# sk-org- is not a documented OpenAI key prefix.
+# Very broad — OpenAI legacy, DeepSeek, OpenRouter, and many non-secret "sk-" strings:
+# sk-
+
+# --- Anthropic (Claude) ---
+sk-ant-api03-
+sk-ant-admin01-
+# Broader Anthropic prefix (noisier than api03-/admin01-):
+# sk-ant-
+
+# --- OpenRouter (TruffleHog: sk-or-v1-{64 hex}) ---
+sk-or-v1-
+# Broader; OpenRouter-specific but matches fewer real keys than sk-or-v1-:
+# sk-or-
+
+# --- Stripe (TruffleHog verifies live [rs]k_live_; test/publishable from Stripe docs) ---
+sk_live_
+sk_test_
+rk_live_
+rk_test_
+pk_live_
+pk_test_
+
+# --- Together AI ---
+# Official docs do not publish a fixed prefix; third-party validators often use tog_.
+# tog_
+# Legacy / uncertain — drop if too noisy in your hunt:
+# together_
+
+# --- Groq (TruffleHog: gsk_{52 alnum}) ---
+gsk_
+
+# --- Mistral ---
+# No public prefix — keys are opaque. GitHub prefix search is unreliable; use trufflehog scan.
+
+# --- Cohere ---
+# Community-observed co_…; no TruffleHog detector — usually too noisy for prefix search:
+# co_
+
+# --- Hugging Face ---
+hf_
+api_org_
+
+# --- Replicate ---
+r8_
+
+# --- Fireworks AI (vendor docs: fw_… API keys; Fire Pass fpk_…) ---
+fw_
+fpk_
+
+# --- Perplexity (vendor docs: pplx-…) ---
+pplx-
+
+# --- xAI (TruffleHog: xai-{80 alnum}) ---
+xai-
+
+# --- DeepSeek (TruffleHog: sk-{32 hex} with deepseek context keyword) ---
+# Same sk- prefix as OpenAI — do not use bare sk- for GitHub code search; scan repos instead.
+
+# --- Google (Gemini / Cloud client keys) ---
+AIzaSy
+
+# --- Runhug / custom product keys ---
+# No public GitHub-wide prefix documented here. Add your org’s known literal once you have one:
+# rh_
+# runhug_
+
+# --- Optional: combine with playbook ---
+# search:
+#   prefix_file: examples/prefixes-providers.example.txt
+#   limit: 500
+#   tokens: [${GITHUB_TOKEN}]

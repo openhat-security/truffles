@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 func runCluster(rest []string) error {
@@ -107,7 +109,7 @@ func clusterDistribute(rest []string) error {
 	cfg := fs.String("c", "cluster.yaml", "cluster config")
 	f := fs.String("f", "repos.txt", "repos list to split")
 	chunks := fs.Int("chunks", 0, "number of chunks (default: number of enabled slaves)")
-	strat := fs.String("split", "roundrobin", "split strategy: roundrobin|owner|hash")
+	strat := fs.String("split", "roundrobin", "split strategy: roundrobin|shuffle|owner|hash")
 	if err := fs.Parse(rest); err != nil {
 		return err
 	}
@@ -130,6 +132,12 @@ func clusterDistribute(rest []string) error {
 		splits = splitByOwner(urls, n)
 	case "hash":
 		sh, err := splitLinesHash(*f, n)
+		if err != nil {
+			return err
+		}
+		splits = sh
+	case "shuffle":
+		sh, err := splitLinesShuffled(*f, n)
 		if err != nil {
 			return err
 		}
@@ -231,6 +239,17 @@ func clusterRun(rest []string) error {
 	collectDir := lay.CollectDir
 	fmt.Printf("[*] run dir: %s\n", collectDir)
 
+	runStart := time.Now()
+	var (
+		searchRan bool
+		searchDur time.Duration
+		scanDur   time.Duration
+	)
+	playbookName := c.Name
+	if pb != nil && pb.Name != "" {
+		playbookName = pb.Name
+	}
+
 	sc := ScanConfig{}
 	if pb != nil {
 		sc = pb.Scan
@@ -250,14 +269,17 @@ func clusterRun(rest []string) error {
 		reposFile = filepath.Join(collectDir, reposListBasename(pb))
 		pb.Search.Out = reposFile
 		fmt.Printf("[*] generating repo list via playbook search → %s\n", reposFile)
+		searchStart := time.Now()
 		if err := runSearch(buildSearchArgs(*pb)); err != nil {
 			return err
 		}
+		searchRan = true
+		searchDur = time.Since(searchStart)
 	case pb != nil && firstExisting(pb.Scan.File) != "":
 		reposFile = firstExisting(pb.Scan.File)
 		fmt.Printf("[*] using existing repo list %s\n", reposFile)
 	default:
-		return fmt.Errorf("no repo list: pass -f <file>, or add search.owner/queries to %s", *cfg)
+		return fmt.Errorf("no repo list: pass -f <file>, or add search.owner/queries/prefix_file to %s", *cfg)
 	}
 
 	w := *workers
@@ -275,15 +297,23 @@ func clusterRun(rest []string) error {
 		fmtStr = "csv"
 	}
 
-	if err := clusterRunOn(c, reposFile, w, fmtStr, sc); err != nil {
+	scanStart := time.Now()
+	if err := clusterRunOn(c, reposFile, w, fmtStr, sc, collectDir); err != nil {
 		return err
 	}
+	scanDur = time.Since(scanStart)
 	if *noCollect {
+		if err := finalizePlaybookRun(collectDir, playbookName, runStart, searchRan, searchDur, scanDur); err != nil {
+			return err
+		}
 		fmt.Printf("cluster run done (reports left on workers; repos: %s)\n", reposFile)
 		return nil
 	}
 	if err := clusterCollectOnWith(c, collectDir, sc); err != nil {
 		return fmt.Errorf("run ok but collect failed: %w", err)
+	}
+	if err := finalizePlaybookRun(collectDir, playbookName, runStart, searchRan, searchDur, scanDur); err != nil {
+		return err
 	}
 	fmt.Printf("cluster run done. results: %s (repos: %s)\n", collectDir, reposFile)
 	return nil
@@ -292,11 +322,11 @@ func clusterRun(rest []string) error {
 // clusterRunOn distributes repos and runs scan on each enabled slave.
 // When auto_heal is enabled (default if gce_instance is set), unreachable
 // workers are reset/redeployed and a transport failure retries once.
-func clusterRunOn(c *Cluster, reposFile string, workers int, format string, sc ScanConfig) error {
+func clusterRunOn(c *Cluster, reposFile string, workers int, format string, sc ScanConfig, collectDir string) error {
 	if err := clusterEnsureReady(c); err != nil {
 		return err
 	}
-	err := clusterRunOnOnce(c, reposFile, workers, format, sc)
+	err := clusterRunOnOnce(c, reposFile, workers, format, sc, collectDir)
 	if err == nil || !clusterAutoHealEnabled(c) || !clusterShouldAutoRecover(err) {
 		return err
 	}
@@ -308,10 +338,10 @@ func clusterRunOn(c *Cluster, reposFile string, workers int, format string, sc S
 	} else if herr := clusterHealOn(c, healOpts{StopRemote: true}); herr != nil {
 		return fmt.Errorf("run failed: %v; heal failed: %w", err, herr)
 	}
-	return clusterRunOnOnce(c, reposFile, workers, format, sc)
+	return clusterRunOnOnce(c, reposFile, workers, format, sc, collectDir)
 }
 
-func clusterRunOnOnce(c *Cluster, reposFile string, workers int, format string, sc ScanConfig) error {
+func clusterRunOnOnce(c *Cluster, reposFile string, workers int, format string, sc ScanConfig, collectDir string) error {
 	enabled := enabledSlaves(c)
 	if len(enabled) == 0 {
 		return fmt.Errorf("no slaves configured")
@@ -326,7 +356,7 @@ func clusterRunOnOnce(c *Cluster, reposFile string, workers int, format string, 
 	if format == "pretty" {
 		ext = "txt"
 	}
-	splits, err := splitLines(reposFile, len(enabled))
+	splits, err := splitLinesShuffled(reposFile, len(enabled))
 	if err != nil {
 		return err
 	}
@@ -392,6 +422,27 @@ func clusterRunOnOnce(c *Cluster, reposFile string, workers int, format string, 
 
 	fmt.Printf("[*] scanning on %d slave(s) in parallel (%d workers each)\n", len(stagedSlaves), workers)
 
+	if collectDir != "" {
+		if err := os.MkdirAll(collectDir, 0755); err != nil {
+			return err
+		}
+		fmt.Printf("[*] mirroring worker scan → %s (tail -f scan-*.log; results-*.csv refresh during scan)\n", collectDir)
+	}
+
+	mirrorWorkers := make([]workerStage, len(stagedSlaves))
+	for i, st := range stagedSlaves {
+		mirrorWorkers[i] = workerStage{sl: st.sl, wd: st.wd}
+	}
+	mirrorCtx, stopMirror := context.WithCancel(context.Background())
+	var mirrorWg sync.WaitGroup
+	if collectDir != "" {
+		mirrorWg.Add(1)
+		go func() {
+			defer mirrorWg.Done()
+			mirrorWorkerResultsDuringRun(mirrorCtx, mirrorWorkers, collectDir, sc)
+		}()
+	}
+
 	var (
 		wg       sync.WaitGroup
 		errMu    sync.Mutex
@@ -403,37 +454,22 @@ func clusterRunOnOnce(c *Cluster, reposFile string, workers int, format string, 
 		go func(st staged) {
 			defer wg.Done()
 			sl := st.sl
-			scanCmd := fmt.Sprintf("cd %s && %s scan -f repos.txt -workers %d -format %s -out results-%s.%s",
-				st.wd, binOrPath(sl.TrufflesPath), workers, format, sl.Name, ext)
-			scanCmd += " " + scanNoProxyFlag(sc.NoProxy)
-			if sc.PoolSize > 0 {
-				scanCmd += fmt.Sprintf(" -pool-size %d", sc.PoolSize)
-			}
-			if sc.PoolWait != "" {
-				scanCmd += " -pool-wait " + sc.PoolWait
-			}
-			if sc.UseDirect != nil && !*sc.UseDirect {
-				scanCmd += " -no-direct"
-			}
-			if len(sc.ExcludePaths) > 0 {
-				scanCmd += " -exclude-paths " + shellSingleQuote(strings.Join(sc.ExcludePaths, ","))
-			}
-			if sc.NoVerification {
-				scanCmd += " -no-verification"
-			}
-			if sc.MaxDepth > 0 {
-				scanCmd += fmt.Sprintf(" -max-depth %d", sc.MaxDepth)
-			}
-			if st.useSkip {
-				scanCmd += " -skip-file skip-repos.txt"
-			}
-			if sc.AppendScanned != "" {
-				scanCmd += fmt.Sprintf(" -append-scanned scanned-%s.txt", sl.Name)
-			}
+			scanCmd := remoteScanCommand(st.wd, sl, workers, format, ext, sc, st.useSkip)
 			run := sshCmd(sl, scanCmd)
 			var errBuf bytes.Buffer
 			run.Stdout = os.Stdout
-			run.Stderr = io.MultiWriter(os.Stderr, &errBuf)
+			stderrOut := []io.Writer{os.Stderr, &errBuf}
+			if collectDir != "" {
+				logPath := workerScanLogPath(collectDir, sl.Name)
+				logf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "scan log %s: %v\n", sl.Name, err)
+				} else {
+					defer logf.Close()
+					stderrOut = append(stderrOut, logf)
+				}
+			}
+			run.Stderr = io.MultiWriter(stderrOut...)
 			if err := run.Run(); err != nil {
 				wrapped := fmt.Errorf("%w: %s", err, strings.TrimSpace(errBuf.String()))
 				fmt.Fprintf(os.Stderr, "slave %s failed: %v\n", sl.Name, err)
@@ -450,6 +486,8 @@ func clusterRunOnOnce(c *Cluster, reposFile string, workers int, format string, 
 		}(st)
 	}
 	wg.Wait()
+	stopMirror()
+	mirrorWg.Wait()
 	if fatalErr != nil {
 		return fatalErr
 	}
@@ -520,15 +558,9 @@ func clusterCollectOnWith(c *Cluster, outDir string, sc ScanConfig) error {
 	var deltas []string
 	for _, sl := range enabled {
 		wd := slaveWorkDir(sl)
-		// Pull every artifact that may exist (csv + pretty txt dual-write).
-		for _, name := range []string{
-			fmt.Sprintf("results-%s.csv", sl.Name),
-			fmt.Sprintf("results-%s.txt", sl.Name),
-			fmt.Sprintf("results-%s.jsonl", sl.Name),
-			fmt.Sprintf("scanned-%s.txt", sl.Name),
-		} {
-			remote := filepath.Join(wd, name)
+		for _, name := range remoteWorkerArtifactNames(sl) {
 			local := filepath.Join(outDir, name)
+			remote := filepath.Join(wd, name)
 			if err := scpFrom(sl, remote, local).Run(); err == nil {
 				if strings.HasPrefix(name, "scanned-") {
 					deltas = append(deltas, local)

@@ -106,6 +106,9 @@ func expandPlaybook(pb *Playbook) {
 	pb.Search.Out = expand(pb.Search.Out)
 	pb.Search.Filter = expand(pb.Search.Filter)
 	pb.Search.Token = expand(pb.Search.Token)
+	for i := range pb.Search.Tokens {
+		pb.Search.Tokens[i] = expand(pb.Search.Tokens[i])
+	}
 	for i := range pb.Search.Queries {
 		pb.Search.Queries[i] = expand(pb.Search.Queries[i])
 	}

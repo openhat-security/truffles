@@ -33,9 +33,10 @@ type Playbook struct {
 }
 
 type SearchConfig struct {
-	Owner     string   `yaml:"owner"`
-	Queries   []string `yaml:"queries"`
-	Filter    string   `yaml:"filter"`
+	Owner      string   `yaml:"owner"`
+	Queries    []string `yaml:"queries"`
+	PrefixFile string   `yaml:"prefix_file"` // API key prefixes → GitHub code search per line
+	Filter     string   `yaml:"filter"`
 	Regex     bool     `yaml:"regex"`
 	Limit     int      `yaml:"limit"`
 	Out       string   `yaml:"out"`
@@ -44,7 +45,8 @@ type SearchConfig struct {
 	NoProxy   bool     `yaml:"no_proxy"`
 	UseDirect *bool    `yaml:"use_direct"`
 	PoolWait  string   `yaml:"pool_wait"`
-	Token     string   `yaml:"token"`
+	Token     string   `yaml:"token"`  // single token or comma-separated list
+	Tokens    []string `yaml:"tokens"` // additional tokens (env-expanded); merged with token
 	Progress  string   `yaml:"progress"`
 }
 
@@ -52,6 +54,7 @@ type ScanConfig struct {
 	File           string   `yaml:"file"`
 	Workers        int      `yaml:"workers"`
 	Token          string   `yaml:"token"`
+	Tokens         []string `yaml:"tokens"` // additional tokens (env-expanded); merged with token
 	Format         string   `yaml:"format"`
 	Out            string   `yaml:"out"`
 	JSON           *bool    `yaml:"json"`
@@ -219,18 +222,28 @@ func runPlaybook(rest []string) error {
 	collectDir := lay.CollectDir
 	fmt.Printf("[*] run dir: %s\n", collectDir)
 
+	runStart := time.Now()
+	var (
+		searchRan bool
+		searchDur time.Duration
+		scanDur   time.Duration
+	)
+
 	var reposFile string
 	if playbookHasSearch(pb) {
 		reposFile = filepath.Join(collectDir, reposListBasename(pb))
 		pb.Search.Out = reposFile
+		searchStart := time.Now()
 		if err := runSearch(buildSearchArgs(*pb)); err != nil {
 			fmt.Fprintf(logger, "search error: %v\n", err)
 			return err
 		}
+		searchRan = true
+		searchDur = time.Since(searchStart)
 	} else if existing := firstExisting(pb.Scan.File); existing != "" {
 		reposFile = existing
 	} else {
-		return fmt.Errorf("playbook has no search.owner/queries and no existing scan.file")
+		return fmt.Errorf("playbook has no search.owner/queries/prefix_file and no existing scan.file")
 	}
 	pb.Scan.File = reposFile
 
@@ -254,12 +267,18 @@ func runPlaybook(rest []string) error {
 		if clusterAutoHealEnabled(c) {
 			fmt.Println("[*] auto_heal on — unreachable workers will be reset and redeployed")
 		}
-		if err := clusterRunOn(c, reposFile, workers, format, pb.Scan); err != nil {
+		scanStart := time.Now()
+		if err := clusterRunOn(c, reposFile, workers, format, pb.Scan, collectDir); err != nil {
 			fmt.Fprintf(logger, "remote scan error: %v\n", err)
 			return err
 		}
+		scanDur = time.Since(scanStart)
 		if err := clusterCollectOnWith(c, collectDir, pb.Scan); err != nil {
 			fmt.Fprintf(logger, "collect error: %v\n", err)
+			return err
+		}
+		if err := finalizePlaybookRun(collectDir, pb.Name, runStart, searchRan, searchDur, scanDur); err != nil {
+			fmt.Fprintf(logger, "timing write error: %v\n", err)
 			return err
 		}
 		fmt.Printf("completed. results: %s\n", collectDir)
@@ -267,9 +286,15 @@ func runPlaybook(rest []string) error {
 	}
 
 	// Local scan
+	scanStart := time.Now()
 	scanArgs := buildScanArgs(*pb)
 	if err := runScan(scanArgs); err != nil {
 		fmt.Fprintf(logger, "scan error: %v\n", err)
+		return err
+	}
+	scanDur = time.Since(scanStart)
+	if err := finalizePlaybookRun(collectDir, pb.Name, runStart, searchRan, searchDur, scanDur); err != nil {
+		fmt.Fprintf(logger, "timing write error: %v\n", err)
 		return err
 	}
 
@@ -291,6 +316,9 @@ func loadPlaybook(path string) (*Playbook, error) {
 			return nil, fmt.Errorf("env_file %s: %w", ef, err)
 		}
 	}
+	if pb.Search.PrefixFile != "" {
+		pb.Search.PrefixFile = resolveEnvFile(path, pb.Search.PrefixFile)
+	}
 	expandPlaybook(&pb)
 	return &pb, nil
 }
@@ -299,7 +327,7 @@ func playbookHasSearch(pb *Playbook) bool {
 	if pb == nil {
 		return false
 	}
-	return pb.Search.Owner != "" || len(pb.Search.Queries) > 0
+	return pb.Search.Owner != "" || len(pb.Search.Queries) > 0 || pb.Search.PrefixFile != ""
 }
 
 // reposListBasename is the filename for the repo URL list inside the run dir.
@@ -336,6 +364,9 @@ func buildSearchArgs(pb Playbook) []string {
 	if len(pb.Search.Queries) > 0 {
 		args = append(args, pb.Search.Queries...)
 	}
+	if pb.Search.PrefixFile != "" {
+		args = append(args, "-prefix-file", pb.Search.PrefixFile)
+	}
 	if pb.Search.Filter != "" {
 		args = append(args, "-filter", pb.Search.Filter)
 	}
@@ -365,8 +396,8 @@ func buildSearchArgs(pb Playbook) []string {
 	if pb.Search.PoolWait != "" {
 		args = append(args, "-pool-wait", pb.Search.PoolWait)
 	}
-	if pb.Search.Token != "" {
-		args = append(args, "-token", pb.Search.Token)
+	if toks := searchAuthTokens(pb.Search); len(toks) > 0 {
+		args = append(args, "-token", strings.Join(toks, ","))
 	}
 	if pb.Search.Progress != "" {
 		args = append(args, "-progress", pb.Search.Progress)
@@ -388,8 +419,8 @@ func buildScanArgs(pb Playbook) []string {
 	if pb.Scan.Workers != 0 {
 		args = append(args, "-workers", fmt.Sprintf("%d", pb.Scan.Workers))
 	}
-	if pb.Scan.Token != "" {
-		args = append(args, "-token", pb.Scan.Token)
+	if toks := scanAuthTokens(pb.Scan); len(toks) > 0 {
+		args = append(args, "-token", strings.Join(toks, ","))
 	}
 	if pb.Scan.Format != "" {
 		args = append(args, "-format", pb.Scan.Format)
@@ -461,9 +492,12 @@ Playbook YAML example:
     owner: BurntSushi
     queries:
       - "*llm*"
+    # prefix_file: examples/prefixes.txt  # optional GitHub code search by key prefix
     out: repos.txt
     limit: 100
     workers: 4
+    # token: ${GITHUB_TOKEN}
+    # tokens: [${GITHUB_TOKEN}, ${GITHUB_TOKEN_2}]
   scan:
     file: repos.txt
     workers: 4

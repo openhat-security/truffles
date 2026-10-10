@@ -25,6 +25,7 @@
 data/
 
 *.json
+!.vscode/settings.json
 
 # Local agent / demo scratch (not source).
 .cursor/local/
@@ -35,3 +36,5 @@ repos-*.txt
 *.env
 !*.env.example
 !*.example.env
+
+!examples/prefixes*
