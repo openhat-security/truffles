@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-12
+
 ### Added
 - `truffles cluster clean-disk` — purge orphan `/tmp/truffles-since-*` clones and workdir artifacts (`--orphans-only`, `--dry-run`); auto-purge after collect; scans stall when disk ≥ 90%
 - `truffles cluster scale` — bump `slaves[].workers` and/or GCE machine type (`--workers`, `--machine`, `--worker name,…`)
