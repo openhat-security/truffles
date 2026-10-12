@@ -421,10 +421,6 @@ func buildJobCommand(loopArgs []string) (*exec.Cmd, string, error) {
 	return cmd, strings.Join(loopArgs, " "), nil
 }
 
-func setJobSysProcAttr(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-}
-
 // parseJobIDArgs extracts optional --jobs-dir and a required job id from mixed argv.
 func parseJobIDArgs(args []string, needID bool) (id, jobsDir string, err error) {
 	jobsDir = defaultJobsDir
@@ -700,7 +696,7 @@ func jobStop(args []string) error {
 		pgid = m.PID
 	}
 	fmt.Printf("stopping job %s (pid=%d pgid=%d)…\n", id, m.PID, pgid)
-	_ = syscall.Kill(-pgid, syscall.SIGTERM)
+	_ = terminateJobProcessGroup(pgid)
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		if !pidAlive(m.PID) {
@@ -709,7 +705,7 @@ func jobStop(args []string) error {
 		time.Sleep(200 * time.Millisecond)
 	}
 	if pidAlive(m.PID) {
-		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+		_ = killJobProcessGroup(pgid)
 		time.Sleep(300 * time.Millisecond)
 	}
 	m.Status = jobStatusStopped
