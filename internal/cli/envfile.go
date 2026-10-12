@@ -105,6 +105,8 @@ func expandPlaybook(pb *Playbook) {
 	pb.Search.Owner = expand(pb.Search.Owner)
 	pb.Search.Out = expand(pb.Search.Out)
 	pb.Search.Filter = expand(pb.Search.Filter)
+	pb.Search.PrefixFile = expand(pb.Search.PrefixFile)
+	pb.Search.SkipFile = expand(pb.Search.SkipFile)
 	pb.Search.Token = expand(pb.Search.Token)
 	for i := range pb.Search.Tokens {
 		pb.Search.Tokens[i] = expand(pb.Search.Tokens[i])
@@ -115,8 +117,12 @@ func expandPlaybook(pb *Playbook) {
 	pb.Scan.File = expand(pb.Scan.File)
 	pb.Scan.Out = expand(pb.Scan.Out)
 	pb.Scan.Token = expand(pb.Scan.Token)
+	for i := range pb.Scan.Tokens {
+		pb.Scan.Tokens[i] = expand(pb.Scan.Tokens[i])
+	}
 	pb.Scan.SkipFile = expand(pb.Scan.SkipFile)
 	pb.Scan.AppendScanned = expand(pb.Scan.AppendScanned)
+	pb.Scan.CleanFile = expand(pb.Scan.CleanFile)
 	for i := range pb.Slaves {
 		expandSlave(&pb.Slaves[i])
 	}

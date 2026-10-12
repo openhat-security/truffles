@@ -40,6 +40,29 @@ func TestRemoteScanCommandProgress(t *testing.T) {
 	}
 }
 
+func TestRemoteScanCommandSince(t *testing.T) {
+	sl := Slave{Name: "worker1", TrufflesPath: "/usr/local/bin/truffles"}
+	cmd := remoteScanCommand("/home/u/work", sl, 4, "csv", "csv", ScanConfig{
+		NoVerification: true,
+	}, false)
+	// omitted since → default 2y
+	if !strings.Contains(cmd, "-since '2y'") {
+		t.Fatalf("default since missing: %q", cmd)
+	}
+	if !strings.Contains(cmd, "-no-verification") {
+		t.Fatalf("missing no-verification: %q", cmd)
+	}
+	// unverified is added inside `scan` when -no-verification is set.
+	cmdAll := remoteScanCommand("/home/u/work", sl, 4, "csv", "csv", ScanConfig{Since: "all"}, false)
+	if !strings.Contains(cmdAll, "-since all") {
+		t.Fatalf("want full history flag: %q", cmdAll)
+	}
+	cmdCustom := remoteScanCommand("/home/u/work", sl, 4, "csv", "csv", ScanConfig{Since: "6m"}, false)
+	if !strings.Contains(cmdCustom, "-since '6m'") {
+		t.Fatalf("custom since missing: %q", cmdCustom)
+	}
+}
+
 func TestRemoteWorkerArtifactNames(t *testing.T) {
 	names := remoteWorkerArtifactNames(Slave{Name: "worker1"})
 	want := []string{
@@ -47,6 +70,7 @@ func TestRemoteWorkerArtifactNames(t *testing.T) {
 		"results-worker1.txt",
 		"results-worker1.jsonl",
 		"scanned-worker1.txt",
+		"clean-worker1.json",
 	}
 	if len(names) != len(want) {
 		t.Fatalf("got %v", names)

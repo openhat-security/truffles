@@ -14,6 +14,41 @@ func TestSplitRoundRobinEqualCounts(t *testing.T) {
 	}
 }
 
+func TestSplitWeightedByCapacity(t *testing.T) {
+	lines := make([]string, 22)
+	for i := range lines {
+		lines[i] = "r" + string(rune('0'+i%10)) + string(rune('a'+i/10))
+	}
+	// 2 big (6) + 5 small (2) → weights sum 22; each unit gets 1 repo.
+	chunks := splitWeighted(lines, []int{6, 6, 2, 2, 2, 2, 2})
+	if len(chunks) != 7 {
+		t.Fatalf("n=%d", len(chunks))
+	}
+	want := []int{6, 6, 2, 2, 2, 2, 2}
+	total := 0
+	for i, c := range chunks {
+		if len(c) != want[i] {
+			t.Fatalf("chunk %d len=%d want %d (%v)", i, len(c), want[i], chunks)
+		}
+		total += len(c)
+	}
+	if total != 22 {
+		t.Fatalf("total=%d", total)
+	}
+}
+
+func TestSlaveWorkersOverride(t *testing.T) {
+	if got := slaveWorkers(Slave{Workers: 2}, 6); got != 2 {
+		t.Fatalf("override=%d", got)
+	}
+	if got := slaveWorkers(Slave{}, 6); got != 6 {
+		t.Fatalf("default=%d", got)
+	}
+	if got := slaveWorkers(Slave{}, 0); got != 4 {
+		t.Fatalf("fallback=%d", got)
+	}
+}
+
 func TestShuffleLinesDeterministic(t *testing.T) {
 	in := []string{"https://github.com/a/1", "https://github.com/b/2", "https://github.com/c/3", "https://github.com/d/4"}
 	a := shuffleLinesDeterministic(in)

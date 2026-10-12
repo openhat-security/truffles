@@ -1,7 +1,13 @@
-# Keep Agent off local scan artifacts and build output.
+# Keep Agent off build output. data/ is gitignored (do not commit findings)
+# so Cursor would hide it; re-include it here so the explorer and @ mentions
+# work. Indexing is skipped in .cursorindexingignore, not here.
 bin/
 dist/
-data/
 .git/
 node_modules/
 .cursor/local/
+
+!data/
+!data/**
+
+.scratch*

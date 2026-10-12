@@ -78,7 +78,17 @@ func TestResolveRunLayoutNonInteractive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if lay.CollectDir != filepath.Join("outdir", "my-scan") {
-		t.Fatalf("got %q", lay.CollectDir)
+	want, err := filepath.Abs(filepath.Join("outdir", "my-scan"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lay.CollectDir != want {
+		t.Fatalf("CollectDir = %q, want %q", lay.CollectDir, want)
+	}
+	if !filepath.IsAbs(lay.CollectDir) {
+		t.Fatalf("CollectDir should be absolute: %q", lay.CollectDir)
+	}
+	if !filepath.IsAbs(lay.DataDir) {
+		t.Fatalf("DataDir should be absolute: %q", lay.DataDir)
 	}
 }

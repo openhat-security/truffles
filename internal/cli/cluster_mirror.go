@@ -16,6 +16,7 @@ func remoteWorkerArtifactNames(sl Slave) []string {
 		fmt.Sprintf("results-%s.txt", sl.Name),
 		fmt.Sprintf("results-%s.jsonl", sl.Name),
 		fmt.Sprintf("scanned-%s.txt", sl.Name),
+		fmt.Sprintf("clean-%s.json", sl.Name),
 	}
 }
 
@@ -67,11 +68,19 @@ func remoteScanCommand(wd string, sl Slave, workers int, format, ext string, sc 
 	if sc.MaxDepth > 0 {
 		scanCmd += fmt.Sprintf(" -max-depth %d", sc.MaxDepth)
 	}
+	if s := resolveSinceFlag(sc.Since); s != "" {
+		scanCmd += " -since " + shellSingleQuote(s)
+	} else {
+		scanCmd += " -since all"
+	}
 	if useSkip {
 		scanCmd += " -skip-file skip-repos.txt"
 	}
 	if sc.AppendScanned != "" {
 		scanCmd += fmt.Sprintf(" -append-scanned scanned-%s.txt", sl.Name)
+	}
+	if sc.CleanFile != "" {
+		scanCmd += fmt.Sprintf(" -clean-file clean-%s.json", sl.Name)
 	}
 	if sc.Progress != "" {
 		scanCmd += " -progress " + shellSingleQuote(sc.Progress)

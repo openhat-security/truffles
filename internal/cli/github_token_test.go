@@ -12,8 +12,9 @@ func TestPersistAndLoadGitHubToken(t *testing.T) {
 	t.Setenv("HOME", dir)
 	// Darwin uses $HOME/Library/Application Support; Linux uses XDG or ~/.config.
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "cfg"))
-	os.Unsetenv("GITHUB_TOKEN")
-	os.Unsetenv("GH_TOKEN")
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_TOKEN", "")
+	t.Setenv("OPENHAT_BOT_GH_TOKEN", "")
 
 	tok := "ghp_test_token_value_not_real"
 	if err := persistGitHubToken(tok); err != nil {
@@ -21,7 +22,7 @@ func TestPersistAndLoadGitHubToken(t *testing.T) {
 	}
 	path := githubTokenPath()
 	if !strings.HasPrefix(path, dir) {
-		t.Fatalf("token path %q not under temp HOME %q", path, dir)
+		t.Fatalf("token path not under temp HOME")
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatal(err)
@@ -31,7 +32,7 @@ func TestPersistAndLoadGitHubToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got != tok {
-		t.Fatalf("got %q", got)
+		t.Fatalf("persisted token mismatch")
 	}
 
 	resolved, err := resolveGitHubToken("", false)
@@ -39,10 +40,10 @@ func TestPersistAndLoadGitHubToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	if resolved != tok {
-		t.Fatalf("resolve = %q", resolved)
+		t.Fatalf("resolve mismatch (env leak?)")
 	}
 	if os.Getenv("GITHUB_TOKEN") != tok {
-		t.Fatal("GITHUB_TOKEN not set in env")
+		t.Fatal("GITHUB_TOKEN not set in env after resolve")
 	}
 }
 

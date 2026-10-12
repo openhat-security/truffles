@@ -1,5 +1,5 @@
 # Common API / token prefixes for GitHub code search (one per line).
-# Used with: truffles search -prefix-file examples/prefixes.txt
+# Used with: PREFIX_FILE=examples/prefixes.txt ./examples/search-ai-keys.sh
 # Each line becomes: "<prefix>" in:file  (via /search/code)
 # Use short literals only — never put full secrets in this file.
 #

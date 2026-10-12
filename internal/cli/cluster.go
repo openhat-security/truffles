@@ -39,9 +39,24 @@ type Slave struct {
 	GCEZone     string `yaml:"gce_zone"`
 	GCEProject  string `yaml:"gce_project"`
 	// GOARCH for cross-compile deploy (default amd64).
-	Arch    string   `yaml:"arch"`
+	Arch string `yaml:"arch"`
+	// Workers is concurrent clones on this slave (0 = use scan.workers / -w).
+	// Use a higher value on bigger VMs and a lower one on e2-small so mixed
+	// fleets do not OOM the small boxes or underfill the big ones.
+	Workers int      `yaml:"workers"`
 	Tags    []string `yaml:"tags"`
 	Enabled bool     `yaml:"enabled"`
+}
+
+// slaveWorkers returns the effective -workers for a slave.
+func slaveWorkers(sl Slave, defaultN int) int {
+	if sl.Workers > 0 {
+		return sl.Workers
+	}
+	if defaultN > 0 {
+		return defaultN
+	}
+	return 4
 }
 
 func defaultClusterName() string {

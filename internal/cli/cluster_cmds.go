@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -65,7 +68,7 @@ usage:
   <data_dir>/<scan_name>/repos.txt, then scans and collects into that same dir.
   Interactive TTY prompts ask for data_dir (default data) and scan name
   (default remote-results); use -y to skip prompts. After collect, worker
-  CSVs are merged into results.csv (per-worker files kept).
+  CSVs are merged into results.csv; verified=true rows also → results-verified.csv.
 
   Playbook/cluster run auto-heals when auto_heal is true (default if gce_instance
   is set): unreachable SSH or mid-run transport errors trigger reset+deploy once.
@@ -249,6 +252,11 @@ func clusterRun(rest []string) error {
 	if pb != nil && pb.Name != "" {
 		playbookName = pb.Name
 	}
+	runPerfBegin(collectDir, PerformanceMetadata{
+		Command:    "cluster run",
+		Playbook:   playbookName,
+		CollectDir: collectDir,
+	})
 
 	sc := ScanConfig{}
 	if pb != nil {
@@ -297,22 +305,32 @@ func clusterRun(rest []string) error {
 		fmtStr = "csv"
 	}
 
+	repoCount := countURLLines(reposFile)
 	scanStart := time.Now()
 	if err := clusterRunOn(c, reposFile, w, fmtStr, sc, collectDir); err != nil {
 		return err
 	}
 	scanDur = time.Since(scanStart)
+	perfRecordPhaseChunk("scan", "cluster", fmt.Sprintf("%d slaves", len(enabledSlaves(c))), true, scanDur, map[string]interface{}{
+		"repos": repoCount, "workers_per_slave": w,
+	})
+	scanMeta := &ScanPerformanceMeta{Repos: repoCount}
 	if *noCollect {
-		if err := finalizePlaybookRun(collectDir, playbookName, runStart, searchRan, searchDur, scanDur); err != nil {
+		if err := finalizePlaybookRun(collectDir, playbookName, "cluster run", runStart, searchRan, searchDur, scanDur, 0,
+			nil, scanMeta, nil, nil); err != nil {
 			return err
 		}
 		fmt.Printf("cluster run done (reports left on workers; repos: %s)\n", reposFile)
 		return nil
 	}
-	if err := clusterCollectOnWith(c, collectDir, sc); err != nil {
+	collectStart := time.Now()
+	collectFiles := 0
+	if err := clusterCollectOnWith(c, collectDir, sc, &collectFiles); err != nil {
 		return fmt.Errorf("run ok but collect failed: %w", err)
 	}
-	if err := finalizePlaybookRun(collectDir, playbookName, runStart, searchRan, searchDur, scanDur); err != nil {
+	collectDur := time.Since(collectStart)
+	if err := finalizePlaybookRun(collectDir, playbookName, "cluster run", runStart, searchRan, searchDur, scanDur, collectDur,
+		nil, scanMeta, &CollectPerformanceMeta{FilesCopied: collectFiles}, nil); err != nil {
 		return err
 	}
 	fmt.Printf("cluster run done. results: %s (repos: %s)\n", collectDir, reposFile)
@@ -356,7 +374,11 @@ func clusterRunOnOnce(c *Cluster, reposFile string, workers int, format string, 
 	if format == "pretty" {
 		ext = "txt"
 	}
-	splits, err := splitLinesShuffled(reposFile, len(enabled))
+	weights := make([]int, len(enabled))
+	for i, sl := range enabled {
+		weights[i] = slaveWorkers(sl, workers)
+	}
+	splits, err := splitLinesShuffledWeighted(reposFile, weights)
 	if err != nil {
 		return err
 	}
@@ -372,7 +394,24 @@ func clusterRunOnOnce(c *Cluster, reposFile string, workers int, format string, 
 		sl      Slave
 		wd      string
 		useSkip bool
+		workers int
+		repos   int
 	}
+	skipPath := filepath.Join(tmpdir, "skip-repos.txt")
+	useSkipMaster := false
+	if sc.SkipFile != "" || sc.CleanFile != "" {
+		if err := writeCombinedSkipFile(skipPath, sc.SkipFile, sc.CleanFile); err != nil {
+			return fmt.Errorf("build skip list: %w", err)
+		}
+		if st, err := os.Stat(skipPath); err == nil && !st.IsDir() && st.Size() > 0 {
+			useSkipMaster = true
+		} else if sc.SkipFile != "" {
+			if _, err := os.Stat(sc.SkipFile); err != nil && os.IsNotExist(err) {
+				fmt.Fprintf(os.Stderr, "[*] skip-file %s not found yet — scanning all repos\n", sc.SkipFile)
+			}
+		}
+	}
+
 	var stagedSlaves []staged
 	for i, sl := range enabled {
 		if i >= len(splits) {
@@ -398,29 +437,29 @@ func clusterRunOnOnce(c *Cluster, reposFile string, workers int, format string, 
 			continue
 		}
 		useSkip := false
-		if sc.SkipFile != "" {
-			if st, err := os.Stat(sc.SkipFile); err == nil && !st.IsDir() {
-				if err := runScpTo(sl, sc.SkipFile, filepath.Join(wd, "skip-repos.txt")); err != nil {
-					fmt.Fprintf(os.Stderr, "scp skip-file to %s failed: %v\n", sl.Name, err)
-					if isSSHTransportErr(err) {
-						return fmt.Errorf("scp skip-file %s: %w", sl.Name, err)
-					}
-				} else {
-					useSkip = true
+		if useSkipMaster {
+			if err := runScpTo(sl, skipPath, filepath.Join(wd, "skip-repos.txt")); err != nil {
+				fmt.Fprintf(os.Stderr, "scp skip-file to %s failed: %v\n", sl.Name, err)
+				if isSSHTransportErr(err) {
+					return fmt.Errorf("scp skip-file %s: %w", sl.Name, err)
 				}
-			} else if err != nil && os.IsNotExist(err) {
-				fmt.Fprintf(os.Stderr, "[*] skip-file %s not found yet — scanning all repos\n", sc.SkipFile)
-			} else if err != nil {
-				fmt.Fprintf(os.Stderr, "[!] skip-file %s: %v\n", sc.SkipFile, err)
+			} else {
+				useSkip = true
 			}
 		}
-		stagedSlaves = append(stagedSlaves, staged{sl: sl, wd: wd, useSkip: useSkip})
+		stagedSlaves = append(stagedSlaves, staged{
+			sl: sl, wd: wd, useSkip: useSkip,
+			workers: weights[i], repos: len(splits[i]),
+		})
 	}
 	if len(stagedSlaves) == 0 {
 		return fmt.Errorf("no slaves received a repo chunk")
 	}
 
-	fmt.Printf("[*] scanning on %d slave(s) in parallel (%d workers each)\n", len(stagedSlaves), workers)
+	fmt.Printf("[*] scanning on %d slave(s) in parallel (capacity-weighted split)\n", len(stagedSlaves))
+	for _, st := range stagedSlaves {
+		fmt.Printf("[*]   %s: %d repos, %d workers\n", st.sl.Name, st.repos, st.workers)
+	}
 
 	if collectDir != "" {
 		if err := os.MkdirAll(collectDir, 0755); err != nil {
@@ -443,6 +482,25 @@ func clusterRunOnOnce(c *Cluster, reposFile string, workers int, format string, 
 		}()
 	}
 
+	var interrupted atomic.Bool
+	sigc := make(chan os.Signal, 1)
+	signal.Notify(sigc, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sigc
+		if !interrupted.CompareAndSwap(false, true) {
+			return
+		}
+		fmt.Fprintln(os.Stderr, "[!] interrupted — syncing worker files then exiting…")
+		stopMirror()
+		// One last pull so Ctrl-C still leaves a usable local snapshot.
+		for _, w := range mirrorWorkers {
+			pullRemoteWorkerFiles(w.sl, w.wd, collectDir)
+		}
+		printInterruptedLocalPaths(os.Stderr, collectDir)
+		os.Exit(130)
+	}()
+	defer signal.Stop(sigc)
+
 	var (
 		wg       sync.WaitGroup
 		errMu    sync.Mutex
@@ -454,7 +512,7 @@ func clusterRunOnOnce(c *Cluster, reposFile string, workers int, format string, 
 		go func(st staged) {
 			defer wg.Done()
 			sl := st.sl
-			scanCmd := remoteScanCommand(st.wd, sl, workers, format, ext, sc, st.useSkip)
+			scanCmd := remoteScanCommand(st.wd, sl, st.workers, format, ext, sc, st.useSkip)
 			run := sshCmd(sl, scanCmd)
 			var errBuf bytes.Buffer
 			run.Stdout = os.Stdout
@@ -471,6 +529,9 @@ func clusterRunOnOnce(c *Cluster, reposFile string, workers int, format string, 
 			}
 			run.Stderr = io.MultiWriter(stderrOut...)
 			if err := run.Run(); err != nil {
+				if interrupted.Load() {
+					return
+				}
 				wrapped := fmt.Errorf("%w: %s", err, strings.TrimSpace(errBuf.String()))
 				fmt.Fprintf(os.Stderr, "slave %s failed: %v\n", sl.Name, err)
 				errMu.Lock()
@@ -488,6 +549,10 @@ func clusterRunOnOnce(c *Cluster, reposFile string, workers int, format string, 
 	wg.Wait()
 	stopMirror()
 	mirrorWg.Wait()
+	if interrupted.Load() {
+		printInterruptedLocalPaths(os.Stderr, collectDir)
+		os.Exit(130)
+	}
 	if fatalErr != nil {
 		return fatalErr
 	}
@@ -547,10 +612,10 @@ func clusterCollect(rest []string) error {
 }
 
 func clusterCollectOn(c *Cluster, outDir string) error {
-	return clusterCollectOnWith(c, outDir, ScanConfig{})
+	return clusterCollectOnWith(c, outDir, ScanConfig{}, nil)
 }
 
-func clusterCollectOnWith(c *Cluster, outDir string, sc ScanConfig) error {
+func clusterCollectOnWith(c *Cluster, outDir string, sc ScanConfig, filesCopied *int) error {
 	if err := os.MkdirAll(outDir, 0755); err != nil {
 		return err
 	}
@@ -561,10 +626,20 @@ func clusterCollectOnWith(c *Cluster, outDir string, sc ScanConfig) error {
 		for _, name := range remoteWorkerArtifactNames(sl) {
 			local := filepath.Join(outDir, name)
 			remote := filepath.Join(wd, name)
-			if err := scpFrom(sl, remote, local).Run(); err == nil {
+			t0 := time.Now()
+			err := scpFrom(sl, remote, local).Run()
+			ok := err == nil
+			if ok {
+				if filesCopied != nil {
+					*filesCopied++
+				}
 				if strings.HasPrefix(name, "scanned-") {
 					deltas = append(deltas, local)
 				}
+			}
+			perfRecordCollectFile(sl.Name, name, ok, time.Since(t0))
+			if !ok {
+				continue
 			}
 		}
 	}
@@ -575,12 +650,35 @@ func clusterCollectOnWith(c *Cluster, outDir string, sc ScanConfig) error {
 		}
 		fmt.Printf("merged %d new URL(s) into %s\n", n, sc.AppendScanned)
 	}
+	var cleanDeltas []string
+	for _, sl := range enabled {
+		local := filepath.Join(outDir, fmt.Sprintf("clean-%s.json", sl.Name))
+		if st, err := os.Stat(local); err == nil && !st.IsDir() {
+			cleanDeltas = append(cleanDeltas, local)
+		}
+	}
+	if sc.CleanFile != "" && len(cleanDeltas) > 0 {
+		n, err := mergeCleanFiles(sc.CleanFile, cleanDeltas)
+		if err != nil {
+			return fmt.Errorf("merge clean_file: %w", err)
+		}
+		fmt.Printf("merged %d clean repo(s) into %s\n", n, sc.CleanFile)
+	}
 	if combined, rows, err := combineResultCSVs(outDir); err != nil {
 		return fmt.Errorf("combine csv: %w", err)
 	} else if combined != "" {
 		fmt.Printf("combined %d row(s) → %s (per-worker CSVs kept)\n", rows, combined)
+		verPath := filepath.Join(outDir, combinedVerifiedCSVName)
+		if st, err := os.Stat(verPath); err == nil && !st.IsDir() {
+			if n, err := countCSVDataRows(verPath); err == nil {
+				fmt.Printf("verified spreadsheet %d row(s) → %s\n", n, verPath)
+			} else {
+				fmt.Printf("verified spreadsheet → %s\n", verPath)
+			}
+		}
 	}
 	fmt.Printf("collected to %s\n", outDir)
+	CoreLog("cluster-collect", fmt.Sprintf("out=%s", absPathForLog(outDir)))
 	return nil
 }
 

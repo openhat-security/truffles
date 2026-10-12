@@ -173,14 +173,21 @@ func (p palette) printTagline(w io.Writer) {
 	fmt.Fprintln(w)
 }
 
-// printNext prints a short cyan "Next:" hint block after a successful command.
-func (p palette) printNext(w io.Writer, lines ...string) {
-	if len(lines) == 0 {
+// printNextHints prints labeled follow-up steps (short title + indented command).
+func (p palette) printNextHints(w io.Writer, hints []nextHint) {
+	if len(hints) == 0 {
 		return
 	}
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, p.byellow("Next:"))
-	for _, line := range lines {
-		fmt.Fprintf(w, "  %s\n", p.cyan(line))
+	for _, h := range hints {
+		if h.warn && h.cmd == "" {
+			fmt.Fprintf(w, "  %s  %s\n", p.bred(h.label), p.dim("(list may have gaps)"))
+			continue
+		}
+		fmt.Fprintf(w, "  %s\n", p.bgreen(h.label))
+		if h.cmd != "" {
+			fmt.Fprintf(w, "    %s\n", p.cyan(h.cmd))
+		}
 	}
 }

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/adamsiwiec/truffles/internal/proxy"
 	"io"
 	"net/http"
 	"net/url"
@@ -19,12 +18,16 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/adamsiwiec/truffles/internal/proxy"
 )
 
 const (
 	perPage    = 100
 	flushEvery = 10
-	maxResults = 10000
+	// Soft warning only — users may set -limit as high as they want (e.g. 100k).
+	// 0 still means unlimited.
+	limitWarnThreshold = 10000
 
 	// maxPagesPerSource is a runaway guard for owner enumeration:
 	// 1000 pages = 100k repos.
@@ -308,13 +311,17 @@ func deriveQuery(patterns []string) string {
 func runSearch(args []string) error {
 	fs := newFlagSet("search")
 	out := fs.String("out", "", "Write results to file (default stdout)")
-	limit := fs.Int("limit", 0, fmt.Sprintf("Max results to output, max %d (0 = no limit)", maxResults))
+	limit := fs.Int("limit", 0, "Max repos to output (0 = no limit; you choose, e.g. 1000 or 100000)")
+	skipFile := fs.String("skip-file", "", "Already-scanned URLs (one per line); skipped and not counted toward -limit")
+	cleanFile := fs.String("clean-file", "", "Repos with no verified secrets (.txt/.json; also skipped, not counted toward -limit)")
 	retries := fs.Int("retries", 4, "Attempts per page before giving up")
 	noProxy := fs.Bool("no-proxy", false, "Connect directly, skipping the proxy pool")
 	var authTokens multiFlag
 	fs.Var(&authTokens, "token", "GitHub token(s); repeat or comma-separate — round-robin per request")
 	useRegex := fs.Bool("regex", false, "Treat patterns as regexes instead of globs")
 	poolSize := fs.Int("pool-size", proxy.DefaultPoolSize, "Target number of validated proxies")
+	poolReserve := fs.Int("pool-reserve", proxy.DefaultReserveSize, "Pre-validated standby proxies (0 = default 30)")
+	proxyFile := fs.String("proxy-file", "", "Your proxies (host:port per line); probed before free lists. trusted: skips probe")
 	probePar := fs.Int("probe-par", proxy.DefaultProbePar, "Concurrent proxy validation probes")
 	poolWait := fs.Duration("pool-wait", 60*time.Second, "How long to wait for the first working proxy")
 	workers := fs.Int("workers", 8, "Concurrent page fetches")
@@ -326,6 +333,8 @@ func runSearch(args []string) error {
 	var queries multiFlag
 	fs.Var(&queries, "q", "GitHub search query; repeatable. Without -owner, positionals are used as queries")
 	prefixFile := fs.String("prefix-file", "", "File of API key prefixes (one per line); each runs a GitHub code search")
+	termsFile := fs.String("terms-file", "", "File of search terms (one per line); plain terms → code search; lines with in: pass through")
+	seed := fs.Int64("seed", 0, "Shuffle query and page order (0 = random; use same seed to replay)")
 	var owners multiFlag
 	fs.Var(&owners, "owner", "GitHub user/org (repeatable, comma-separated). Omit to search globally")
 	if err := parseFlags(fs, args); err != nil {
@@ -339,8 +348,8 @@ func runSearch(args []string) error {
 	// Positional args are always patterns; owner comes only from -owner.
 	patterns := fs.Args()
 
-	if len(owners) == 0 && len(patterns) == 0 && len(queries) == 0 && *prefixFile == "" {
-		return fmt.Errorf("nothing to search — pass -owner, a pattern, -q, or -prefix-file\n" +
+	if len(owners) == 0 && len(patterns) == 0 && len(queries) == 0 && *prefixFile == "" && *termsFile == "" {
+		return fmt.Errorf("nothing to search — pass -owner, a pattern, -q, -prefix-file, or -terms-file\n" +
 			"  e.g. search -owner BurntSushi '*llm*'\n" +
 			"  e.g. search 'llm' -limit 100\n" +
 			"  e.g. search -prefix-file examples/prefixes.txt -limit 500")
@@ -388,8 +397,31 @@ func runSearch(args []string) error {
 			fmt.Fprintf(os.Stderr, "[+] loaded %d prefix(es) from %s → %d code search queries\n",
 				len(prefixes), *prefixFile, len(codeQueries))
 		}
+		if *termsFile != "" {
+			terms, err := loadPrefixFile(*termsFile)
+			if err != nil {
+				return err
+			}
+			if codeQueries == nil {
+				codeQueries = map[string]bool{}
+			}
+			before := len(searchQueries)
+			searchQueries = mergeTermQueries(searchQueries, terms, codeQueries)
+			fmt.Fprintf(os.Stderr, "[+] loaded %d term(s) from %s → %d queries (+ %d new)\n",
+				len(terms), *termsFile, len(searchQueries), len(searchQueries)-before)
+		}
 		if len(searchQueries) == 0 {
-			return fmt.Errorf("no usable search query: pass -q <term> or -prefix-file")
+			return fmt.Errorf("no usable search query: pass -q, -prefix-file, or -terms-file")
+		}
+		if len(authTokens) == 0 {
+			if t := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); t != "" {
+				authTokens = append(authTokens, t)
+			} else if t := strings.TrimSpace(os.Getenv("GH_TOKEN")); t != "" {
+				authTokens = append(authTokens, t)
+			}
+		}
+		if len(codeQueries) > 0 && len(splitAuthTokens(authTokens...)) == 0 {
+			return fmt.Errorf("GitHub code search requires a PAT (unauthenticated → 401): set GITHUB_TOKEN, pass -token, or set search.tokens in the playbook")
 		}
 		if len(authTokens) == 0 {
 			fmt.Fprintf(os.Stderr, "[!] GitHub search is 10 req/min per IP unauthenticated — pass -token\n")
@@ -405,12 +437,41 @@ func runSearch(args []string) error {
 	if *retries < 1 {
 		*retries = 1
 	}
-	if *limit > maxResults {
-		fmt.Fprintf(os.Stderr, "[!] -limit %d exceeds max %d, clamping\n", *limit, maxResults)
-		*limit = maxResults
+	if *limit >= limitWarnThreshold {
+		fmt.Fprintf(os.Stderr, "[!] -limit %d is large — search + full scan can take days; prefer skip_file/append_scanned and since: for reruns\n", *limit)
+	}
+
+	skip, err := loadSkipSet(*skipFile)
+	if err != nil {
+		return fmt.Errorf("reading -skip-file %s: %w", *skipFile, err)
+	}
+	if _, err := unionCleanIntoSkip(skip, *cleanFile); err != nil {
+		return fmt.Errorf("reading -clean-file %s: %w", *cleanFile, err)
+	}
+	if n := len(skip); n > 0 {
+		src := *skipFile
+		if *cleanFile != "" {
+			if src != "" {
+				src += "+" + *cleanFile
+			} else {
+				src = *cleanFile
+			}
+		}
+		fmt.Fprintf(os.Stderr, "[*] search will skip %d already-scanned/clean repo(s) from %s\n", n, src)
 	}
 
 	dest := os.Stdout
+	outForPerf := *out
+	if outForPerf == "" {
+		outForPerf = "repos.txt"
+	}
+	if runPerfActive() == nil {
+		runPerfBegin(performanceDirForOutput(outForPerf), PerformanceMetadata{
+			Command: "search",
+			Output:  outForPerf,
+		})
+	}
+
 	if *out != "" {
 		f, err := os.Create(*out)
 		if err != nil {
@@ -435,7 +496,10 @@ func runSearch(args []string) error {
 
 	var pool *proxy.Pool
 	if !*noProxy {
-		pool = proxy.NewPool(*poolSize, *probePar, *verbose, *useDirect && !*noDirect, logf)
+		pool = proxy.NewPool(*poolSize, *poolReserve, *probePar, *verbose, *useDirect && !*noDirect, logf)
+		if err := applyProxyFile(pool, *proxyFile); err != nil {
+			return err
+		}
 		pool.Start(ctx)
 
 		// Free proxies are ~4% yield, so wait for the first keeper rather
@@ -480,8 +544,13 @@ func runSearch(args []string) error {
 			}
 			lastErr = err
 
-			if pr != nil && !errors.As(err, new(*statusErr)) {
-				pool.ReportFailure(pr)
+			if pool != nil && pr != nil {
+				var se *statusErr
+				if errors.As(err, &se) && se.retryable {
+					pool.ReportRateLimited(pr, interval)
+				} else if !errors.As(err, &se) {
+					pool.ReportFailure(pr)
+				}
 			}
 			if isTerminal(err) {
 				return nil, 0, last, err
@@ -513,9 +582,26 @@ func runSearch(args []string) error {
 		emitMu    sync.Mutex
 		matched   atomic.Int64
 		calls     atomic.Int64
-		truncated bool
+		truncated atomic.Bool
+		stopOnce  sync.Once
 		start     = time.Now()
 	)
+
+	// hitLimit cancels in-flight search work once -limit is satisfied so we
+	// do not keep discovering remaining prefixes / pages after the quota.
+	hitLimit := func() {
+		if *limit <= 0 {
+			return
+		}
+		if matched.Load() < int64(*limit) {
+			return
+		}
+		stopOnce.Do(func() {
+			truncated.Store(true)
+			cancel()
+			logf("[*] -limit %d reached — stopping search", *limit)
+		})
+	}
 
 	// poolDesc describes where requests are currently going.
 	poolDesc := func() string {
@@ -526,7 +612,10 @@ func runSearch(args []string) error {
 		if s.Alive == 0 {
 			return "0 alive (direct)"
 		}
-		desc := fmt.Sprintf("%d/%d alive", s.Alive, s.Target)
+		desc := fmt.Sprintf("%d/%d alive", s.ProxiesAlive, s.Target)
+		if s.ReserveAlive > 0 {
+			desc += fmt.Sprintf(" +%d reserve", s.ReserveAlive)
+		}
 		if s.Direct {
 			desc += " +direct"
 		}
@@ -598,11 +687,12 @@ func runSearch(args []string) error {
 
 	seenURL := map[string]bool{}
 	var seenMu sync.Mutex
+	var skippedKnown atomic.Int64
 
 	emit := func(repos []Repo) {
 		for _, r := range repos {
 			if *limit > 0 && matched.Load() >= int64(*limit) {
-				truncated = true
+				hitLimit()
 				return
 			}
 			if !matches(r.Name) {
@@ -612,19 +702,28 @@ func runSearch(args []string) error {
 			if u == "" {
 				continue
 			}
+			key := normalizeRepoURL(u)
 			seenMu.Lock()
-			if seenURL[u] {
+			if seenURL[key] {
 				seenMu.Unlock()
 				continue
 			}
-			seenURL[u] = true
+			seenURL[key] = true
 			seenMu.Unlock()
+			if _, known := skip[key]; known {
+				skippedKnown.Add(1)
+				continue
+			}
 
 			fmt.Fprintln(buf, u)
 			n := matched.Add(1)
 			if n%flushEvery == 0 {
 				buf.Flush()
 				reportProgress(false)
+			}
+			if *limit > 0 && n >= int64(*limit) {
+				hitLimit()
+				return
 			}
 		}
 	}
@@ -647,6 +746,9 @@ func runSearch(args []string) error {
 		}
 	}
 
+	_, shuffleRNG := resolveSearchSeed(*seed)
+	shuffleSources(sources, shuffleRNG)
+
 	// Phase 1: fetch page 1 of each source to learn how many pages exist.
 	// GitHub reports this in the Link header (rel="last") and total_count,
 	// so we never issue speculative requests past the end.
@@ -654,14 +756,14 @@ func runSearch(args []string) error {
 	// Discovery is retried across rounds too: a single dead proxy on page 1
 	// would otherwise silently drop that org's entire repo list.
 	var (
-		fatal   error
-		failMu  sync.Mutex
-		work    = map[srcSpec][]int{}
-		failedO = map[string]bool{}
+		fatal    error
+		failMu   sync.Mutex
+		pageJobs []pageJob
+		failedO  = map[string]bool{}
 	)
 
 	pending := sources
-	for round := 0; round < 3 && len(pending) > 0; round++ {
+	for round := 0; round < 3 && len(pending) > 0 && !truncated.Load(); round++ {
 		if round > 0 {
 			logf("[*] retrying discovery for %d source(s), round %d", len(pending), round)
 			if pool != nil {
@@ -674,6 +776,9 @@ func runSearch(args []string) error {
 
 		var stillPending []srcSpec
 		for _, src := range pending {
+			if truncated.Load() {
+				break
+			}
 			repos, totalPages, via1, err := fetchPageOf(src, 1)
 			if err != nil {
 				if isTerminal(err) {
@@ -695,11 +800,8 @@ func runSearch(args []string) error {
 				logf("[*] enumerating %s (%d pages, first page via %s)", src.key, totalPages, via1)
 			}
 
-			emit(repos)
-			buf.Flush()
-
-			if truncated {
-				continue
+			if truncated.Load() {
+				break
 			}
 			cap := maxPagesPerSource
 			if src.query != "" {
@@ -709,9 +811,17 @@ func runSearch(args []string) error {
 				logf("[*] clamping %s from %d to %d page(s)", srcName(src), totalPages, cap)
 				totalPages = cap
 			}
-			for p := 2; p <= totalPages; p++ {
-				work[src] = append(work[src], p)
+			for p := 1; p <= totalPages; p++ {
+				pj := pageJob{src: src, page: p}
+				if p == 1 {
+					pj.prefetched = repos
+				}
+				pageJobs = append(pageJobs, pj)
 			}
+		}
+		if truncated.Load() {
+			pending = nil
+			break
 		}
 		pending = stillPending
 	}
@@ -719,16 +829,13 @@ func runSearch(args []string) error {
 		failedO[src.key] = true
 	}
 
-	// Phase 2: fan out the remaining known pages across workers.
-	type job struct {
-		src  srcSpec
-		page int
-	}
+	// Phase 2: fan out pages in seeded shuffle order (not always page 1 first).
+	shufflePageJobs(pageJobs, shuffleRNG)
 
 	var (
 		failedMu sync.Mutex
-		failed   []job // retried in later rounds, never silently dropped
-		dead     []job // gave up entirely; reported to the user
+		failed   []pageJob // retried in later rounds, never silently dropped
+		dead     []pageJob // gave up entirely; reported to the user
 	)
 
 	nWorkers := *workers
@@ -738,8 +845,8 @@ func runSearch(args []string) error {
 
 	// runPass pushes every queued page through fetchPageOf, retrying the
 	// ones that fail across rounds with freshly validated proxies.
-	runPass := func(queued []job) {
-		ch := make(chan job, 64)
+	runPass := func(queued []pageJob) {
+		ch := make(chan pageJob, 64)
 		// Feed from a separate goroutine: pushing inline would block forever
 		// once the buffer filled, because no worker is running yet. That
 		// deadlocked any source with more than one buffer's worth of pages
@@ -763,11 +870,26 @@ func runSearch(args []string) error {
 				for j := range ch {
 					// Stop pulling new pages once -limit is satisfied;
 					// otherwise we'd burn requests on results we drop.
-					if ctx.Err() != nil {
+					if ctx.Err() != nil || truncated.Load() {
 						return
 					}
-					repos, _, lastVia, err := fetchPageOf(j.src, j.page)
+					pageStart := time.Now()
+					var repos []Repo
+					var lastVia string
+					var err error
+					if len(j.prefetched) > 0 {
+						repos = j.prefetched
+						lastVia = "discovery"
+					} else {
+						repos, _, lastVia, err = fetchPageOf(j.src, j.page)
+					}
+					pageDur := time.Since(pageStart)
+					srcLabel := j.src.key
+					if j.src.query != "" {
+						srcLabel = j.src.query
+					}
 					if err != nil {
+						perfRecordSearchPage(srcLabel, j.page, 0, lastVia, false, pageDur)
 						if isTerminal(err) {
 							failMu.Lock()
 							if fatal == nil {
@@ -781,8 +903,11 @@ func runSearch(args []string) error {
 						failedMu.Unlock()
 						continue
 					}
+					perfRecordSearchPage(srcLabel, j.page, len(repos), lastVia, true, pageDur)
 					emitMu.Lock()
-					calls.Add(1)
+					if len(j.prefetched) == 0 {
+						calls.Add(1)
+					}
 					if *verbose {
 						name := j.src.key
 						if j.src.query != "" {
@@ -799,32 +924,28 @@ func runSearch(args []string) error {
 		wg.Wait()
 	}
 
-	queued := make([]job, 0)
-	for src, pages := range work {
-		for _, p := range pages {
-			queued = append(queued, job{src, p})
-		}
-	}
-	runPass(queued)
+	if !truncated.Load() && len(pageJobs) > 0 {
+		runPass(pageJobs)
 
-	// Retry rounds. Free proxies die constantly, so a page that failed
-	// against a dead proxy often succeeds against a fresh one. Dropping it
-	// would silently lose repos.
-	for round := 0; round < 3 && len(failed) > 0; round++ {
-		retry := failed
-		failed = nil
-		logf("[*] retrying %d failed page(s), round %d", len(retry), round+1)
+		// Retry rounds. Free proxies die constantly, so a page that failed
+		// against a dead proxy often succeeds against a fresh one. Dropping it
+		// would silently lose repos.
+		for round := 0; round < 3 && len(failed) > 0 && !truncated.Load(); round++ {
+			retry := failed
+			failed = nil
+			logf("[*] retrying %d failed page(s), round %d", len(retry), round+1)
 
-		// Give the pool a moment to validate replacements.
-		if pool != nil {
-			deadline := time.Now().Add(30 * time.Second)
-			for pool.Stats().ProxiesAlive == 0 && time.Now().Before(deadline) {
-				time.Sleep(500 * time.Millisecond)
+			// Give the pool a moment to validate replacements.
+			if pool != nil {
+				deadline := time.Now().Add(30 * time.Second)
+				for pool.Stats().ProxiesAlive == 0 && time.Now().Before(deadline) {
+					time.Sleep(500 * time.Millisecond)
+				}
 			}
+			runPass(retry)
 		}
-		runPass(retry)
+		dead = append(dead, failed...)
 	}
-	dead = append(dead, failed...)
 	buf.Flush()
 
 	if fatal != nil {
@@ -835,7 +956,11 @@ func runSearch(args []string) error {
 	if len(dead) > 0 {
 		pages := make([]string, 0, len(dead))
 		for _, j := range dead {
-			pages = append(pages, fmt.Sprintf("%s p%d", j.src.key, j.page))
+			key := j.src.key
+			if j.src.query != "" {
+				key = "q=" + j.src.query
+			}
+			pages = append(pages, fmt.Sprintf("%s p%d", key, j.page))
 		}
 		logf("[!] INCOMPLETE — %d page(s) failed after retries: %s",
 			len(dead), strings.Join(pages, ", "))
@@ -851,8 +976,11 @@ func runSearch(args []string) error {
 	}
 
 	note := ""
-	if truncated {
+	if truncated.Load() {
 		note = fmt.Sprintf(" (stopped at -limit %d)", *limit)
+	}
+	if n := skippedKnown.Load(); n > 0 {
+		note += fmt.Sprintf(" (skipped %d already-scanned)", n)
 	}
 	label := strings.Join(patterns, " ")
 	if *useRegex {
@@ -860,6 +988,17 @@ func runSearch(args []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "[+] done — %d calls, %d matched %s%s\n",
 		calls.Load(), matched.Load(), label, note)
+
+	outHint := *out
+	if outHint == "" || outHint == "-" {
+		outHint = "repos.txt"
+	}
+	incompleteMsg := "ok"
+	if len(dead) > 0 {
+		incompleteMsg = fmt.Sprintf("partial (%d pages failed)", len(dead))
+	}
+	CoreLog("search", fmt.Sprintf("%s  matched=%d calls=%d skipped=%d  out=%s",
+		incompleteMsg, matched.Load(), calls.Load(), skippedKnown.Load(), absPathForLog(outHint)))
 
 	if pool != nil {
 		s := pool.Stats()
@@ -872,14 +1011,31 @@ func runSearch(args []string) error {
 	}
 
 	p := palette{on: resolveColor("auto", os.Stderr)}
-	outHint := *out
-	if outHint == "" || outHint == "-" {
-		outHint = "repos.txt"
+	p.printNextHints(os.Stderr, searchNextSteps(searchNextOpts{
+		outPath:     outHint,
+		incomplete:  len(dead) > 0,
+		failedPages: len(dead),
+		prefixFile:  *prefixFile,
+		termsFile:   *termsFile,
+		skipFile:    *skipFile,
+		cleanFile:   *cleanFile,
+		limit:       *limit,
+		proxyFile:   *proxyFile,
+		hasRemotePB: hasRemotePlaybook(),
+	}))
+
+	searchMeta := SearchPerformanceMeta{
+		Matched:     matched.Load(),
+		Calls:       calls.Load(),
+		Skipped:     skippedKnown.Load(),
+		FailedPages: len(dead),
+		Incomplete:  len(dead) > 0,
 	}
-	p.printNext(os.Stderr,
-		fmt.Sprintf("truffles scan -f %s", outHint),
-		fmt.Sprintf("truffles scan -f %s -format csv", outHint),
-		"truffles playbook -f playbook.yaml",
-	)
+	perfNoteSearchComplete(searchMeta)
+	if r := runPerfActive(); r != nil && r.meta.Command == "search" {
+		if err := finalizeSearchPerformance(outForPerf, start, time.Since(start), searchMeta, pool); err != nil {
+			fmt.Fprintf(os.Stderr, "[!] performance write: %v\n", err)
+		}
+	}
 	return nil
 }

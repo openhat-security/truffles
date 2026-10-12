@@ -11,7 +11,7 @@ Website: **[truffles.devrecated.com](https://truffles.devrecated.com)** · Org: 
 Enumerate owners or search globally (with a proxy pool for rate limits), filter by glob or regex, then scan full git history with [trufflehog](https://github.com/trufflesecurity/trufflehog). Or write a YAML playbook and run both steps in one shot.
 
 [![CI](https://github.com/openhat-security/truffles/actions/workflows/ci.yml/badge.svg)](https://github.com/openhat-security/truffles/actions/workflows/ci.yml)
-[![Go](https://img.shields.io/badge/go-1.24%2B-blue)](https://go.dev)
+[![Go](https://img.shields.io/badge/go-1.26%2B-blue)](https://go.dev)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Website](https://img.shields.io/badge/website-truffles.devrecated.com-orange)](https://truffles.devrecated.com)
 
@@ -50,13 +50,13 @@ cd truffles
 make build          # → ./truffles
 make install        # or: go install ./cmd/truffles
 
-# Go
+# Go (module path is still github.com/adamsiwiec/truffles)
 go install github.com/adamsiwiec/truffles/cmd/truffles@latest
 ```
 
 Packaging details: [packaging/README.md](packaging/README.md) · Releases: [github.com/openhat-security/truffles/releases](https://github.com/openhat-security/truffles/releases)
 
-Requires [`trufflehog`](https://github.com/trufflesecurity/trufflehog) on `PATH` for `scan` (override with `-bin`). A GitHub token is optional for public search and required for private repos.
+Requires [`trufflehog`](https://github.com/trufflesecurity/trufflehog) on `PATH` for `scan` (override with `-bin`). A GitHub token is optional for public search and required for private repos. Scan defaults to **`-since 2y`** (full clone; only commits in the window are scanned — use `-since all` for entire history).
 
 ## Quick start
 
@@ -67,16 +67,22 @@ Requires [`trufflehog`](https://github.com/trufflesecurity/trufflehog) on `PATH`
 # every public repo under an org
 ./truffles search -owner openhat-security -out repos.txt
 
-# glob filter (repo names matching *run*)
-./truffles search -owner openhat-security '*run*' -out repos.txt
+# AI / LLM key pattern search (shuffled; skips scanned+clean)
+./examples/search-ai-keys.sh
 
 # scan history (default report format: csv; also writes .txt)
 ./truffles scan -f repos.txt
 
+# 24/7 remote loop (search → cluster scan)
+./truffles job start -c remote-playbook.yaml --prefix-file examples/prefixes-openai.txt
+
+# live-verify CSV secrets; roll up results
+./truffles verify -f data/remote-results/results.csv
+./truffles consolidate --update-master --update-clean
+
 # coordinated disclosure from a results CSV (dry-run; add -submit to POST)
 ./truffles disclose -f data/remote-results/results.csv
 ./truffles disclose -f data/remote-results -submit   # prompts for token once, then reuses it
-# PVR on → private advisory; PVR off → issue pointing to openhat@devrecated.com
 
 # or: author a playbook and run both steps
 vim playbook.yaml
@@ -108,7 +114,7 @@ New here? Run `truffles wizard`. It walks you through owner vs global search, op
 - Status lines: `[ok]` clean · `[++]` findings · `[!!]` **not scanned** (never counted as clean).
 - Reports default to a timestamped file and are fsynced after every repo — Ctrl-C keeps what finished.
 - `-format pretty|csv|jsonl`. Colour respects `NO_COLOR` and `-color always|never`.
-- `-max-depth N` is **lossy** (misses old commits). Prefer full history when secrets matter.
+- `-max-depth N` and default `-since 2y` are **lossy** (miss older commits). Use `-since all` when full history matters.
 - **Record demo GIFs:** `brew install vhs && make demo-vhs TAPE=quickstart` → `assets/screenshots/quickstart.{gif,mp4}`. Other tapes: [docs/demos.md](docs/demos.md).
 
 ## search / scan
@@ -120,6 +126,8 @@ New here? Run `truffles wizard`. It walks you through owner vs global search, op
 `scan` reads a URL list and runs trufflehog. Progress stays on stderr; the report goes to `-out`.
 
 Deep notes (proxy pool, durability, measured performance): [docs/architecture.md](docs/architecture.md).
+
+**Operations wiki** (jobs, remote cluster, kill/restart, troubleshooting): [GitHub Wiki](https://github.com/openhat-security/truffles/wiki) — source in [docs/wiki/](docs/wiki/); publish with `./scripts/sync-wiki.sh`.
 
 ## Security
 

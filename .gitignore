@@ -38,3 +38,5 @@ repos-*.txt
 !*.example.env
 
 !examples/prefixes*
+!examples/*
+.scratch*

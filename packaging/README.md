@@ -99,5 +99,5 @@ npm i -g truffles
 ## Local snapshot
 
 ```bash
-make release-snapshot   # if defined; else: goreleaser release --snapshot --clean
+goreleaser release --snapshot --clean
 ```

@@ -220,6 +220,16 @@ func openReportSink(out, format, colorMode string, toStdout bool) (*reportSink, 
 	return s, nil
 }
 
+func (s *reportSink) mainReportPath() string {
+	if s.csvPath != "" {
+		return s.csvPath
+	}
+	if s.prettyPath != "" {
+		return s.prettyPath
+	}
+	return s.jsonlPath
+}
+
 func (s *reportSink) paths() []string {
 	var out []string
 	for _, p := range []string{s.prettyPath, s.csvPath, s.jsonlPath} {
@@ -353,9 +363,11 @@ func writeCSVHeader(w io.Writer) {
 func writeCSV(w io.Writer, res Result) {
 	cw := csv.NewWriter(w)
 	for _, f := range res.Findings {
-		repo := f.Repo()
+		// Prefer the scan target URL (https://github.com/…) over trufflehog's
+		// local file:// clone path when -since pre-clones.
+		repo := res.Repo
 		if repo == "" {
-			repo = res.Repo
+			repo = f.Repo()
 		}
 		g := f.SourceMetadata.Data.Git
 		fl := g.File
@@ -384,7 +396,7 @@ func writeCSV(w io.Writer, res Result) {
 func writeJSONL(w io.Writer, res Result) {
 	enc := json.NewEncoder(w)
 	for _, f := range res.Findings {
-		if f.Repo() == "" {
+		if res.Repo != "" {
 			f.SourceMetadata.Data.Git.Repository = res.Repo
 		}
 		enc.Encode(f)

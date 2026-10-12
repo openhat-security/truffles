@@ -1,0 +1,12 @@
+# One term per line. Plain lines become GitHub code search: "<term>" in:file
+# Lines that already include " in:" are passed through unchanged.
+#
+# Use with:
+#   ./truffles search -terms-file examples/search-terms.example.txt -seed 0 \
+#     -skip-file data/scanned-repos.txt -clean-file data/clean-repos.txt -limit 500
+#
+# -seed 0 picks a new random page/query order each run (logged for replay).
+
+sk-proj-
+OPENAI_API_KEY
+openai in:file language:typescript

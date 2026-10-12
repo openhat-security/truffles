@@ -63,3 +63,19 @@ func TestLoadEnvFileDoesNotOverrideExisting(t *testing.T) {
 		t.Fatalf("got %q, want fromenv", got)
 	}
 }
+
+func TestExpandPlaybookScanTokens(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "ghp_search")
+	t.Setenv("GITHUB_TOKEN_2", "")
+	pb := Playbook{
+		Search: SearchConfig{Tokens: []string{"${GITHUB_TOKEN}", "${GITHUB_TOKEN_2}"}},
+		Scan:   ScanConfig{Tokens: []string{"${GITHUB_TOKEN}"}},
+	}
+	expandPlaybook(&pb)
+	if got := searchAuthTokens(pb.Search); len(got) != 1 || got[0] != "ghp_search" {
+		t.Fatalf("search tokens = %v", got)
+	}
+	if got := scanAuthTokens(pb.Scan); len(got) != 1 || got[0] != "ghp_search" {
+		t.Fatalf("scan tokens = %v", got)
+	}
+}

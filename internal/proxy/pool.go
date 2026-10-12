@@ -28,7 +28,8 @@ const (
 	CoreInterval   = 60 * time.Second // 60 req/hr
 	SearchInterval = 6 * time.Second  // 10 req/min
 
-	DefaultPoolSize = 30
+	DefaultPoolSize    = 30
+	DefaultReserveSize = 30 // pre-validated spares; used when live IPs 403 or die
 	// Validation yield is flat with concurrency, but wall time is not:
 	// measured 400 candidates -> 21 kept in 39s at par=60, 22 kept in 21s
 	// at par=150, 21 kept in 13s at par=300. So probe hard by default;
@@ -131,14 +132,16 @@ type PoolStats struct {
 	// ProxiesAlive counts validated proxies only, excluding the local machine.
 	// Readiness checks must use this: including direct would make the pool look
 	// ready the moment it is created and defeat the pool wait.
-	ProxiesAlive int
-	Target       int
-	Alive        int
-	Probed       int64
-	Kept         int64
-	Requests     int64
-	Failures     int64
-	Candidates   int
+	ProxiesAlive  int
+	ReserveAlive  int
+	Target        int
+	ReserveTarget int
+	Alive         int
+	Probed        int64
+	Kept          int64
+	Requests      int64
+	Failures      int64
+	Candidates    int
 }
 
 // why proxies died, for -v diagnostics.
@@ -190,15 +193,17 @@ func (r *reasons) top(n int) []string {
 // Free proxies are ephemeral (~58% of a pool dies within 45s), so this
 // continuously replenishes rather than fetching once.
 type Pool struct {
-	target  int
-	par     int
-	verbose bool
-	logf    func(string, ...any)
+	target        int
+	reserveTarget int
+	par           int
+	verbose       bool
+	logf          func(string, ...any)
 
-	mu     sync.Mutex
-	live   []*Proxy
-	cand   []string
-	candAt time.Time
+	mu      sync.Mutex
+	live    []*Proxy
+	reserve []*Proxy
+	cand    []string
+	candAt  time.Time
 
 	lastWaitNotice time.Time
 
@@ -213,14 +218,27 @@ type Pool struct {
 }
 
 // NewPool builds a pool that replenishes toward target size.
-func NewPool(target, par int, verbose, useDirect bool, logf func(string, ...any)) *Pool {
+// reserveTarget is how many extra validated proxies to keep on standby (0 = default).
+func NewPool(target, reserveTarget, par int, verbose, useDirect bool, logf func(string, ...any)) *Pool {
 	if target < 1 {
 		target = 1
+	}
+	if reserveTarget < 0 {
+		reserveTarget = 0 // disabled (tests)
+	} else if reserveTarget == 0 {
+		reserveTarget = DefaultReserveSize
 	}
 	if par < 1 {
 		par = 1
 	}
-	p := &Pool{target: target, par: par, verbose: verbose, logf: logf, why: newReasons()}
+	p := &Pool{
+		target:        target,
+		reserveTarget: reserveTarget,
+		par:           par,
+		verbose:       verbose,
+		logf:          logf,
+		why:           newReasons(),
+	}
 	if useDirect {
 		// Seeded straight into the live set: it needs no validation and is
 		// available immediately, so the very first request can go direct
@@ -236,6 +254,7 @@ func (p *Pool) Stats() PoolStats {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	proxies := 0
+	reserve := 0
 	for _, pr := range p.live {
 		pr.mu.Lock()
 		broken := pr.broken
@@ -244,16 +263,83 @@ func (p *Pool) Stats() PoolStats {
 			proxies++
 		}
 	}
+	for _, pr := range p.reserve {
+		pr.mu.Lock()
+		broken := pr.broken
+		pr.mu.Unlock()
+		if !broken && !pr.direct {
+			reserve++
+		}
+	}
 	return PoolStats{
-		Direct:       p.direct,
-		ProxiesAlive: proxies,
-		Target:       p.target,
-		Alive:        len(p.live),
-		Probed:       atomic.LoadInt64(&p.probed),
-		Kept:         atomic.LoadInt64(&p.kept),
-		Requests:     atomic.LoadInt64(&p.requests),
-		Failures:     atomic.LoadInt64(&p.failures),
-		Candidates:   len(p.cand),
+		Direct:        p.direct,
+		ProxiesAlive:  proxies,
+		ReserveAlive:  reserve,
+		Target:        p.target,
+		ReserveTarget: p.reserveTarget,
+		Alive:         len(p.live),
+		Probed:        atomic.LoadInt64(&p.probed),
+		Kept:          atomic.LoadInt64(&p.kept),
+		Requests:      atomic.LoadInt64(&p.requests),
+		Failures:      atomic.LoadInt64(&p.failures),
+		Candidates:    len(p.cand),
+	}
+}
+
+// PrependCandidates queues addresses to validate before any scraped free list.
+// Call before or after Start; safe to call multiple times (deduped).
+func (p *Pool) PrependCandidates(addrs []string) {
+	if len(addrs) == 0 {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	seen := map[string]bool{}
+	for _, a := range p.cand {
+		seen[a] = true
+	}
+	var front []string
+	for _, a := range addrs {
+		if !validAddr(a) || seen[a] {
+			continue
+		}
+		seen[a] = true
+		front = append(front, a)
+	}
+	if len(front) == 0 {
+		return
+	}
+	p.cand = append(front, p.cand...)
+	p.logf("[+] queued %d priority proxy candidate(s) from file", len(front))
+}
+
+// AdmitTrusted adds pre-validated proxies straight into live (then reserve).
+func (p *Pool) AdmitTrusted(addrs []string) {
+	if len(addrs) == 0 {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	added := 0
+	for _, addr := range addrs {
+		if !validAddr(addr) {
+			continue
+		}
+		pr := newProxy(addr)
+		if len(p.live) < p.target {
+			p.live = append(p.live, pr)
+			added++
+			atomic.AddInt64(&p.kept, 1)
+		} else if len(p.reserve) < p.reserveTarget {
+			p.reserve = append(p.reserve, pr)
+			added++
+			atomic.AddInt64(&p.kept, 1)
+		} else {
+			pr.close()
+		}
+	}
+	if added > 0 {
+		p.logf("[+] admitted %d trusted proxy(ies) (skip probe)", added)
 	}
 }
 
@@ -289,24 +375,30 @@ func (p *Pool) Next(ctx context.Context, interval time.Duration) *Proxy {
 		// other GitHub work.
 		var best, bestDirect *Proxy
 		var bestAt, bestDirectAt time.Time
-		for _, pr := range p.live {
+		consider := func(pr *Proxy) {
 			pr.mu.Lock()
 			at := pr.nextAt
 			broken := pr.broken
 			busy := pr.busy
 			pr.mu.Unlock()
 			if broken || busy {
-				continue
+				return
 			}
 			if pr.direct {
 				if bestDirect == nil || at.Before(bestDirectAt) {
 					bestDirect, bestDirectAt = pr, at
 				}
-				continue
+				return
 			}
 			if best == nil || at.Before(bestAt) {
 				best, bestAt = pr, at
 			}
+		}
+		for _, pr := range p.live {
+			consider(pr)
+		}
+		for _, pr := range p.reserve {
+			consider(pr)
 		}
 		// Direct is used only when it is strictly available sooner than the
 		// best proxy. Requiring "strictly" keeps it a filler: on a tie the
@@ -389,7 +481,43 @@ func (p *Pool) drop(pr *Proxy) {
 		}
 	}
 	p.live = out
+	// Drop from reserve too if present.
+	if len(p.reserve) > 0 {
+		rout := p.reserve[:0]
+		for _, x := range p.reserve {
+			if x != pr {
+				rout = append(rout, x)
+			}
+		}
+		p.reserve = rout
+	}
+	p.promoteReserveLocked()
 	p.mu.Unlock()
+}
+
+// promoteReserveLocked moves standby proxies into live until target is met.
+func (p *Pool) promoteReserveLocked() {
+	for len(p.live) < p.target && len(p.reserve) > 0 {
+		pr := p.reserve[0]
+		p.reserve = p.reserve[1:]
+		p.live = append(p.live, pr)
+	}
+}
+
+// ReportRateLimited backs off a proxy after GitHub 403/429 without retiring it.
+// The next withRetries attempt picks a different member via Next().
+func (p *Pool) ReportRateLimited(pr *Proxy, interval time.Duration) {
+	if pr == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = SearchInterval
+	}
+	if pr.direct {
+		pr.backoff(intervalDirectBackoff)
+		return
+	}
+	pr.backoff(interval)
 }
 
 // ReportFailure retires a proxy whose request failed at the transport level.
@@ -446,12 +574,25 @@ func (pr *Proxy) close() {
 func (p *Pool) replenish(ctx context.Context) {
 	for ctx.Err() == nil {
 		p.mu.Lock()
-		need := p.target - len(p.live)
+		p.promoteReserveLocked()
+		needLive := p.target - len(p.live)
+		needReserve := p.reserveTarget - len(p.reserve)
 		p.mu.Unlock()
 
+		need := needLive
 		if need <= 0 {
+			need = 0
+		}
+		// Keep probing while live is full but reserve is below target.
+		if needLive <= 0 && needReserve > 0 {
+			need = needReserve
+		}
+		if need <= 0 && needLive <= 0 && needReserve <= 0 {
 			sleepCtx(ctx, 5*time.Second)
 			continue
+		}
+		if need <= 0 {
+			need = 1
 		}
 
 		batch := p.takeBatch(need * probesPerKeeper)
@@ -523,17 +664,33 @@ func (p *Pool) probeBatch(ctx context.Context, batch []string) {
 				return
 			}
 
+			pr := newProxy(addr)
 			p.mu.Lock()
-			full := len(p.live) >= p.target
-			if !full {
-				p.live = append(p.live, newProxy(addr))
+			added := false
+			where := ""
+			if len(p.live) < p.target {
+				p.live = append(p.live, pr)
+				added = true
+				where = "live"
+			} else if len(p.reserve) < p.reserveTarget {
+				p.reserve = append(p.reserve, pr)
+				added = true
+				where = "reserve"
+			}
+			if added {
 				atomic.AddInt64(&p.kept, 1)
 			}
 			alive := len(p.live)
+			res := len(p.reserve)
 			p.mu.Unlock()
 
-			if !full {
+			if added && where == "live" {
 				p.logf("[+] proxy validated: %s (%d/%d alive)", addr, alive, p.target)
+			} else if added && where == "reserve" && p.verbose {
+				p.logf("[+] proxy validated: %s (reserve %d/%d)", addr, res, p.reserveTarget)
+			}
+			if !added {
+				pr.close()
 			}
 		}(addr)
 	}

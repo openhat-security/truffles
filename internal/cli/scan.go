@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -27,10 +28,11 @@ func runScan(args []string) error {
 
 	workers := fs.Int("workers", 4, "Concurrent repos (helps small repos; big clones stay bandwidth-bound)")
 	fs.IntVar(workers, "w", 4, "Shorthand for -workers")
-	token := fs.String("token", "", "GitHub token for private repos")
+	token := fs.String("token", "", "GitHub token(s) for clone auth + verification (embedded in git URL; comma-separated OK)")
 	results := fs.String("results", "verified,unknown", "Result types: verified,unknown,unverified")
-	noVerify := fs.Bool("no-verification", false, "Skip live verification (much faster; everything comes back UNVERIFIED)")
-	maxDepth := fs.Int("max-depth", 0, "Only scan the last N commits per repo (0 = all history)")
+	noVerify := fs.Bool("no-verification", false, "Skip live verification (avoids outbound API/DNS timeouts on fake secrets; implies unverified in -results)")
+	maxDepth := fs.Int("max-depth", 0, "Only scan the last N commits per repo (0 = all history; lossy)")
+	since := fs.String("since", defaultSince, "After full clone, only scan commits on/after this (YYYY-MM-DD or 2y/24m/730d; default 2y); all|full = entire history")
 	excludePaths := fs.String("exclude-paths", "", "Comma-separated globs to skip (trufflehog --exclude-globs)")
 	jsonOut := fs.Bool("json", true, "Use JSON output")
 	out := fs.String("out", "", "Report file (default <input>-<unixtimestamp>.txt; \"-\" for stdout)")
@@ -38,12 +40,14 @@ func runScan(args []string) error {
 	format := fs.String("format", "csv", "Report format: pretty, csv, jsonl (pretty+csv both written to disk)")
 	skipFile := fs.String("skip-file", "", "Repos already scanned (one URL per line); matching repos are skipped")
 	appendScanned := fs.String("append-scanned", "", "Append successfully scanned URLs here (master list; often same as -skip-file)")
+	cleanFile := fs.String("clean-file", "", "Repos with no verified secrets (.txt one URL/line or .json map; skip + update after verifying scans)")
 	progressEvery := fs.Duration("progress", 10*time.Second, "Log progress this often; 0 disables the heartbeat")
 	verbose := fs.Bool("v", false, "Also show trufflehog's own log output")
 	// Default true: free proxies are a poor fit for multi-GB git packs and
 	// stall parallel workers. Opt into the pool with -no-proxy=false.
 	noProxy := fs.Bool("no-proxy", true, "Clone directly (default); set -no-proxy=false to use the proxy pool")
 	poolSize := fs.Int("pool-size", proxy.DefaultPoolSize, "Target number of validated proxies")
+	proxyFile := fs.String("proxy-file", "", "Your proxies (host:port per line); trusted: skips probe")
 	probePar := fs.Int("probe-par", proxy.DefaultProbePar, "Concurrent proxy validation probes")
 	poolWait := fs.Duration("pool-wait", 60*time.Second, "How long to wait for the first working proxy")
 	useDirect := fs.Bool("use-direct", true, "Also clone via this machine's IP alongside the proxies")
@@ -68,6 +72,18 @@ func runScan(args []string) error {
 	if _, err := exec.LookPath(*trufflehogBin); err != nil {
 		return fmt.Errorf("trufflehog binary %q not usable (override with -bin): %w", *trufflehogBin, err)
 	}
+	sinceSpec := resolveSinceFlag(*since)
+	var sinceAt time.Time
+	if sinceSpec != "" {
+		var err error
+		sinceAt, err = parseSince(sinceSpec)
+		if err != nil {
+			return err
+		}
+		if _, err := exec.LookPath("git"); err != nil {
+			return fmt.Errorf("-since needs git in PATH: %w", err)
+		}
+	}
 
 	urls, err := readURLs(*filePath)
 	if err != nil {
@@ -77,11 +93,19 @@ func runScan(args []string) error {
 	if err != nil {
 		return fmt.Errorf("reading -skip-file %s: %w", *skipFile, err)
 	}
+	cleanAdded, err := unionCleanIntoSkip(skip, *cleanFile)
+	if err != nil {
+		return fmt.Errorf("reading -clean-file %s: %w", *cleanFile, err)
+	}
 	var skipped []string
 	urls, skipped = filterSkipped(urls, skip)
 	if len(urls) == 0 {
 		if len(skipped) > 0 {
-			fmt.Fprintf(os.Stderr, "[*] all %d repos already in %s — nothing to scan\n", len(skipped), *skipFile)
+			src := *skipFile
+			if src == "" {
+				src = *cleanFile
+			}
+			fmt.Fprintf(os.Stderr, "[*] all %d repos already skipped (%s) — nothing to scan\n", len(skipped), src)
 			return nil
 		}
 		fmt.Fprintf(os.Stderr, "[!] no URLs found in %s\n", *filePath)
@@ -90,10 +114,27 @@ func runScan(args []string) error {
 	if *workers < 1 {
 		*workers = 1
 	}
+	resultsFilter := *results
+	if *noVerify {
+		// --no-verification never emits verified hits; without unverified in
+		// --results the report stays empty even when detectors fire.
+		resultsFilter = ensureResultsInclude(resultsFilter, "unverified")
+	}
 
 	sp := palette{resolveColor(*colorMode, os.Stderr)}
 	statusf := func(format string, a ...any) {
 		fmt.Fprintf(os.Stderr, format+"\n", a...)
+	}
+	if cleanAdded > 0 {
+		statusf("%s", sp.dim(fmt.Sprintf("[*] skip +%d clean repo(s) from %s", cleanAdded, *cleanFile)))
+	}
+	if !sinceAt.IsZero() {
+		statusf("%s", sp.dim(fmt.Sprintf("[*] -since %s → full clone, scan commits on/after %s", sinceSpec, sinceAt.UTC().Format("2006-01-02"))))
+	} else {
+		statusf("%s", sp.dim("[*] -since all → full clone, scan entire history"))
+	}
+	if *noVerify {
+		statusf("%s", sp.dim(fmt.Sprintf("[*] -no-verification → --results=%s", resultsFilter)))
 	}
 
 	scanTokens := splitAuthTokens(*token)
@@ -114,8 +155,23 @@ func runScan(args []string) error {
 	}
 	defer rep.Close()
 
+	perfDir := "data"
+	if !toStdout {
+		perfDir = performanceDirForOutput(reportPath)
+	}
+	if runPerfActive() == nil {
+		runPerfBegin(perfDir, PerformanceMetadata{
+			Command: "scan",
+			Output:  reportPath,
+		})
+	}
+
 	appender := newScannedAppender(*appendScanned)
 	appender.Seed(skip)
+	cleaner := newCleanStore(*cleanFile)
+	if *cleanFile != "" && *noVerify {
+		statusf("%s", sp.dim("[*] -clean-file set but -no-verification: will skip clean repos, not update the map"))
+	}
 
 	if toStdout {
 		statusf("%s", sp.dim("[*] report -> stdout (pass -out <file> to write a file)"))
@@ -126,10 +182,13 @@ func runScan(args []string) error {
 	}
 	statusf("%s", sp.dim(fmt.Sprintf("[*] %d repos, %d workers", len(urls), *workers)))
 	if n := len(skipped); n > 0 {
-		statusf("%s", sp.dim(fmt.Sprintf("[*] skipping %d already-scanned repo(s) from %s", n, *skipFile)))
+		statusf("%s", sp.dim(fmt.Sprintf("[*] skipping %d already-scanned/clean repo(s)", n)))
 	}
 	if *appendScanned != "" {
 		statusf("%s", sp.dim("[*] append scanned -> "+*appendScanned))
+	}
+	if *cleanFile != "" && !*noVerify {
+		statusf("%s", sp.dim("[*] clean map (0 verified) -> "+*cleanFile))
 	}
 	if *verbose {
 		statusf("%s", sp.dim("[*] -v: trufflehog's own log output will be shown"))
@@ -152,7 +211,10 @@ func runScan(args []string) error {
 	logf := func(f string, a ...any) { statusf(f, a...) }
 	var pool *proxy.Pool
 	if !*noProxy {
-		pool = proxy.NewPool(*poolSize, *probePar, *verbose, *useDirect && !*noDirect, logf)
+		pool = proxy.NewPool(*poolSize, proxy.DefaultReserveSize, *probePar, *verbose, *useDirect && !*noDirect, logf)
+		if err := applyProxyFile(pool, *proxyFile); err != nil {
+			return err
+		}
 		pool.Start(ctx)
 		deadline := time.Now().Add(*poolWait)
 		for pool.Stats().ProxiesAlive == 0 && time.Now().Before(deadline) {
@@ -217,8 +279,9 @@ func runScan(args []string) error {
 		rep.flush()
 		rep.mu.Unlock()
 		if !toStdout {
+			statusf("%s", sp.bold("[!] interrupted — partial report saved:"))
 			for _, p := range rep.paths() {
-				statusf("%s", sp.bold("[!] interrupted — partial report saved to "+p))
+				statusf("  %s", absPathOrSelf(p))
 			}
 		}
 		cancel()
@@ -238,20 +301,18 @@ func runScan(args []string) error {
 			for repo := range ch {
 				atomic.AddInt64(&inFlight, 1)
 				res := scanRepo(ctx, *trufflehogBin, repo, scanOptions{
-					token: tokenPicker.next(), results: *results, jsonOut: *jsonOut,
-					noVerify: *noVerify, maxDepth: *maxDepth, excludePaths: *excludePaths,
-					pool: pool, verbose: *verbose, logf: logf,
+					token: tokenPicker.next(), results: resultsFilter, jsonOut: *jsonOut,
+					noVerify: *noVerify, maxDepth: *maxDepth, since: sinceAt,
+					excludePaths: *excludePaths,
+					pool:         pool, verbose: *verbose, logf: logf,
 				})
 				atomic.AddInt64(&inFlight, -1)
 				atomic.AddInt64(&done, 1)
 				atomic.AddInt64(&findings, int64(len(res.Findings)))
-				if res.Err != nil {
-					atomic.AddInt64(&failed, 1)
-				} else if err := appender.Add(repo); err != nil {
-					statusf("%s", sp.yellow(fmt.Sprintf("[!] append-scanned: %v", err)))
-				}
+				repoVerified := 0
 				for _, fd := range res.Findings {
 					if fd.Verified {
+						repoVerified++
 						atomic.AddInt64(&verified, 1)
 					}
 					name := fd.DetectorName
@@ -260,6 +321,21 @@ func runScan(args []string) error {
 					}
 					v, _ := byDetector.LoadOrStore(name, new(int64))
 					atomic.AddInt64(v.(*int64), 1)
+				}
+				perfRecordScanRepo(repo, res.Err == nil, len(res.Findings), repoVerified, res.Duration)
+
+				if res.Err != nil {
+					atomic.AddInt64(&failed, 1)
+				} else if err := appender.Add(repo); err != nil {
+					statusf("%s", sp.yellow(fmt.Sprintf("[!] append-scanned: %v", err)))
+				} else if !*noVerify && cleaner != nil {
+					if repoVerified == 0 {
+						if err := cleaner.MarkClean(repo); err != nil {
+							statusf("%s", sp.yellow(fmt.Sprintf("[!] clean-file: %v", err)))
+						}
+					} else if err := cleaner.MarkDirty(repo); err != nil {
+						statusf("%s", sp.yellow(fmt.Sprintf("[!] clean-file: %v", err)))
+					}
 				}
 
 				name := shortRepo(repo)
@@ -285,7 +361,11 @@ func runScan(args []string) error {
 
 				rep.writeRepo(repo, res)
 
-				if len(res.Findings) > 0 && !toStdout && rep.pretty != nil {
+				// Full finding bodies already go to the report files. Echoing them
+				// on stderr floods SSH on cluster runs (hundreds of fixture hits ×
+				// pretty blocks) and stalls the worker. Only dump when the user
+				// asked for pretty stdout-style output or -v.
+				if len(res.Findings) > 0 && !toStdout && rep.pretty != nil && (*format == "pretty" || *verbose) {
 					var sb strings.Builder
 					renderRepo(prettyWriter{&sb}, sp, repo, res)
 					statusf("%s", strings.TrimRight(sb.String(), "\n"))
@@ -312,6 +392,23 @@ func runScan(args []string) error {
 	statusf("  repos scanned %d, failed %d, findings %d (%d verified), elapsed %s",
 		len(urls), fail, atomic.LoadInt64(&findings), atomic.LoadInt64(&verified), elapsed)
 	statusf("%s", sp.dim(fmt.Sprintf("[+] done — %d repos, %d finding(s), %s", len(urls), atomic.LoadInt64(&findings), elapsed)))
+	appendPath := *appendScanned
+	cleanPath := *cleanFile
+	CoreLog("scan", fmt.Sprintf("repos=%d failed=%d findings=%d verified=%d  append=%s  clean=%s  report=%s",
+		len(urls), fail, atomic.LoadInt64(&findings), atomic.LoadInt64(&verified),
+		absPathForLog(appendPath), absPathForLog(cleanPath), absPathForLog(rep.mainReportPath())))
+	scanMeta := ScanPerformanceMeta{
+		Repos:    len(urls),
+		Failed:   fail,
+		Findings: atomic.LoadInt64(&findings),
+		Verified: atomic.LoadInt64(&verified),
+	}
+	perfNoteScanComplete(scanMeta)
+	if r := runPerfActive(); r != nil && r.meta.Command == "scan" {
+		if err := finalizeScanPerformance(perfDir, started, elapsed, scanMeta, pool); err != nil {
+			statusf("%s", sp.yellow(fmt.Sprintf("[!] performance write: %v", err)))
+		}
+	}
 	if !toStdout {
 		for _, p := range rep.paths() {
 			statusf("%s", sp.bold("[+] report -> "+p))
@@ -328,10 +425,34 @@ type scanOptions struct {
 	jsonOut      bool
 	noVerify     bool
 	maxDepth     int
+	since        time.Time // zero = scan all commits; else full clone + --since-commit
 	excludePaths string
 	pool         *proxy.Pool
 	verbose      bool
 	logf         func(string, ...any)
+}
+
+// gitScanURI is the URI passed to `trufflehog git`. Recent trufflehog builds
+// have no --token on the git subcommand; auth for GitHub HTTPS clones must be
+// embedded in the URL (x-access-token). Reports still use the bare repo URL.
+func gitScanURI(repo, token string) string {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return repo
+	}
+	u, err := url.Parse(repo)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return repo
+	}
+	if u.User != nil {
+		return repo // already has credentials
+	}
+	host := strings.ToLower(u.Hostname())
+	if host != "github.com" && host != "www.github.com" {
+		return repo
+	}
+	u.User = url.UserPassword("x-access-token", token)
+	return u.String()
 }
 
 // scanRepo runs trufflehog over one repo, capturing findings on stdout and
@@ -341,16 +462,58 @@ func scanRepo(ctx context.Context, bin, repo string, o scanOptions) Result {
 	// --no-update: trufflehog's self-updater fails with "cannot move binary"
 	// when the binary is root-owned (e.g. /usr/local/bin) and we run as a
 	// normal user — which aborts the whole scan before any findings.
-	args := []string{"git", repo, "--no-update"}
+	//
+	// Do not pass --token: `trufflehog git` rejects it ("unknown long flag")
+	// on current releases; use an authenticated clone URL instead.
+	target := gitScanURI(repo, o.token)
+	res := Result{Repo: repo}
+	logf := o.logf
+	if logf == nil {
+		logf = func(string, ...any) {}
+	}
+
+	start := time.Now()
+	var localClone string
+	var sinceCommit string
+	if !o.since.IsZero() {
+		dir, err := os.MkdirTemp("", "truffles-since-*")
+		if err != nil {
+			res.Duration = time.Since(start)
+			res.Err = fmt.Errorf("temp dir: %w", err)
+			return res
+		}
+		defer os.RemoveAll(dir)
+		env := proxyChildEnv(nil)
+		if o.token != "" {
+			env = append(env, "GITHUB_TOKEN="+o.token)
+		}
+		if err := fullClone(ctx, target, dir, env); err != nil {
+			res.Duration = time.Since(start)
+			res.Err = fmt.Errorf("full clone: %w", err)
+			return res
+		}
+		sha, err := sinceCommitSHA(ctx, dir, o.since)
+		if err != nil {
+			res.Duration = time.Since(start)
+			res.Err = fmt.Errorf("since-commit: %w", err)
+			return res
+		}
+		sinceCommit = sha
+		localClone = dir
+		// trufflehog git requires a URI scheme; bare /tmp/... → "unsupported Git URI".
+		target = fileURI(dir)
+	}
+
+	args := []string{"git", target, "--no-update"}
 	if o.jsonOut {
 		args = append(args, "--json")
 	}
 	args = append(args, "--results="+o.results)
-	if o.token != "" {
-		args = append(args, "--token="+o.token)
-	}
 	if o.noVerify {
 		args = append(args, "--no-verification")
+	}
+	if sinceCommit != "" {
+		args = append(args, "--since-commit="+sinceCommit)
 	}
 	if o.maxDepth > 0 {
 		args = append(args, fmt.Sprintf("--max-depth=%d", o.maxDepth))
@@ -361,19 +524,12 @@ func scanRepo(ctx context.Context, bin, repo string, o scanOptions) Result {
 		args = append(args, "--exclude-globs="+o.excludePaths)
 	}
 
-	res := Result{Repo: repo}
-	logf := o.logf
-	if logf == nil {
-		logf = func(string, ...any) {}
-	}
-
-	start := time.Now()
 	var stdout, stderr []byte
 	var err error
 	for attempt := 0; ; attempt++ {
 		var pr *proxy.Proxy
 		var release func()
-		if o.pool != nil {
+		if o.pool != nil && localClone == "" {
 			// Short gate between acquisitions; Busy() holds the IP for the clone.
 			pr = o.pool.Next(ctx, time.Second)
 			if pr != nil {
@@ -385,11 +541,22 @@ func scanRepo(ctx context.Context, bin, repo string, o scanOptions) Result {
 			if pr != nil {
 				via = pr.Addr()
 			}
+			if localClone != "" {
+				via = "full-clone"
+				if sinceCommit != "" {
+					via = "full-clone+since-commit"
+				}
+			}
 			logf("[*] %s via %s (attempt %d)", shortRepo(repo), via, attempt+1)
 		}
 
 		cmd := exec.CommandContext(ctx, bin, args...)
 		cmd.Env = proxyChildEnv(pr)
+		if o.token != "" {
+			// Verification / GitHub API calls inside trufflehog read GITHUB_TOKEN;
+			// the git subcommand itself has no --token flag.
+			cmd.Env = append(cmd.Env, "GITHUB_TOKEN="+o.token)
+		}
 		var errBuf strings.Builder
 		cmd.Stderr = &errBuf
 		stdout, err = cmd.Output()
@@ -455,6 +622,23 @@ func proxyChildEnv(pr *proxy.Proxy) []string {
 	return out
 }
 
+// ensureResultsInclude appends typ to a comma-separated --results list if absent.
+func ensureResultsInclude(results, typ string) string {
+	typ = strings.TrimSpace(typ)
+	if typ == "" {
+		return results
+	}
+	for _, p := range strings.Split(results, ",") {
+		if strings.EqualFold(strings.TrimSpace(p), typ) {
+			return results
+		}
+	}
+	if strings.TrimSpace(results) == "" {
+		return typ
+	}
+	return results + "," + typ
+}
+
 // proxyScanError is true when a failed clone likely implicates the proxy.
 func proxyScanError(stderr []byte, err error) bool {
 	s := strings.ToLower(string(stderr) + " " + err.Error())
@@ -511,6 +695,8 @@ func permanentScanError(stderr []byte) bool {
 		"could not read Username",
 		"403 Forbidden",
 		"does not exist",
+		"unknown long flag",
+		"unsupported Git URI",
 	} {
 		if strings.Contains(s, m) {
 			return true
@@ -540,6 +726,14 @@ func scanError(err error, stderr []byte) error {
 	reason := ""
 	for _, line := range strings.Split(string(stderr), "\n") {
 		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// Plain kingpin/CLI errors: "trufflehog: error: unknown long flag..."
+		if strings.HasPrefix(line, "trufflehog: error:") {
+			reason = strings.TrimSpace(strings.TrimPrefix(line, "trufflehog: error:"))
+			continue
+		}
 		if !strings.HasPrefix(line, "{") {
 			continue
 		}

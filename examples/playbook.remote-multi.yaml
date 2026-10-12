@@ -33,6 +33,7 @@ scan:
   no_proxy: true
   skip_file: data/scanned-repos.txt
   append_scanned: data/scanned-repos.txt
+  clean_file: data/clean-repos.txt
   exclude_paths:
     - node_modules
     - vendor

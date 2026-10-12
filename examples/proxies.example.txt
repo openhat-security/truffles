@@ -1,0 +1,14 @@
+# One proxy per line: host:port
+# Lines from this file are probed BEFORE scraped public lists.
+#
+# Paid/static proxies you trust (skip GitHub probe, use immediately):
+# trusted:203.0.113.10:8080
+# trusted:198.51.100.44:3128
+#
+# Or normal lines (validated against api.github.com like free proxies):
+# 203.0.113.11:8080
+#
+# search:
+#   proxy_file: examples/proxies.example.txt
+# CLI:
+#   truffles search -proxy-file examples/proxies.example.txt ...

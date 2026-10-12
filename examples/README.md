@@ -1,46 +1,74 @@
 # Examples
 
-## Playbook
+Run scripts from the **repo root** (`./examples/...`).
+
+## AI key discovery (search only)
+
+Shuffled GitHub code search for repos mentioning known AI/LLM key patterns. Skips repos already in `data/scanned-repos.txt` and `data/clean-repos.txt`.
+
+```bash
+go build -o ./truffles ./cmd/truffles
+source remote.env   # or export GITHUB_TOKEN
+
+./examples/search-ai-keys.sh
+# LIMIT=300 PREFIX_FILE=examples/prefixes.txt ./examples/search-ai-keys.sh  # all providers
+```
+
+Output: `data/repos-ai-<timestamp>.txt` plus `data/performance.json` (page-level timings). Core events: `tail -f data/truffles.log`.
+
+**Next (remote GCE):**
+
+```bash
+./truffles cluster run -c remote-playbook.yaml -f data/repos-ai-<timestamp>.txt \
+  -out remote-results-$(date +%Y%m%d-%H%M%S) -data-dir data -y
+```
+
+**Next (24/7 loop):**
+
+```bash
+./truffles job start -c remote-playbook.yaml --prefix-file examples/prefixes-openai.txt --seed 0
+```
+
+### Prefix lists
+
+| File | Use |
+|------|-----|
+| `prefixes-openai.txt` | OpenAI-focused (default for `search-ai-keys.sh`) |
+| `prefixes.txt` | Multi-provider (OpenAI, Anthropic, AWS, Slack, …) |
+
+## Owner enumeration
+
+```bash
+./truffles search -owner openhat-security '*run*' -out repos.txt
+./truffles scan -f repos.txt
+```
+
+## Local playbook
 
 ```bash
 ./truffles playbook -f examples/playbook.sample.yaml
-# background:
-./truffles playbook -f examples/playbook.sample.yaml -d -pidfile /tmp/truffles.pb.pid
 ```
 
-The sample playbook enumerates `openhat-security` with the `*run*` glob, then scans.
-
-**Multi-host scan parallelism** (repos split across GCE workers; SSH scans run concurrently):
+## Remote multi-worker (GCE)
 
 ```bash
-./scripts/manage-gce-workers.sh sandbox420 suggest
-./scripts/manage-gce-workers.sh sandbox420 create --count 2 --machine e2-standard-2
-./scripts/manage-gce-workers.sh sandbox420 env truffles-worker-1 1 >> examples/remote-multi.env
-./scripts/manage-gce-workers.sh sandbox420 env truffles-worker-2 2 >> examples/remote-multi.env
+./scripts/manage-gce-workers.sh YOUR_PROJECT suggest
 ./truffles cluster deploy -c examples/playbook.remote-multi.yaml
 ./truffles playbook -f examples/playbook.remote-multi.yaml
 ```
 
-Author your own:
+See `examples/remote-multi.example.env` for worker env vars.
+
+## Cluster CLI (SSH)
 
 ```bash
-vim playbook.yaml
-./truffles playbook -f playbook.yaml
+./truffles cluster run -c examples/cluster.yaml -f repos.txt -y
 ```
 
-## Shell scripts
-
-From repo root:
+## Results rollup
 
 ```bash
-# Global search + scan
-./examples/search-scan.sh "llm"
-
-# Prefix-driven GitHub *code* search (then scan)
-./truffles search -prefix-file examples/prefixes.txt -limit 500 -out repos.txt
-./truffles search -prefix-file examples/prefixes-providers.example.txt -limit 300 -out provider-repos.txt
-
-# Owner enumeration + scan (with optional patterns)
-./examples/owner-scan.sh openhat-security '*run*'
-./examples/owner-scan.sh openhat-security
+./truffles combine data/remote-results-* -o data/results-combined.csv
+./truffles consolidate --update-master --update-clean
+./truffles clean rebuild --include-scanned
 ```

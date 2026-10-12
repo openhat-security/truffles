@@ -107,6 +107,13 @@ func resolveRunLayout(opts runLayoutOpts) (runLayout, error) {
 	if err != nil {
 		return runLayout{}, err
 	}
+	collectDir, err = filepath.Abs(collectDir)
+	if err != nil {
+		return runLayout{}, err
+	}
+	if absRoot, err := filepath.Abs(dataDir); err == nil {
+		dataDir = absRoot
+	}
 	return runLayout{DataDir: dataDir, ScanName: scanName, CollectDir: collectDir}, nil
 }
 

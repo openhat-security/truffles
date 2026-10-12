@@ -12,6 +12,7 @@ const usage = `truffles - GitHub repo enumeration + secret scanning
 usage:
   truffles search [flags] [pattern]...   find repos by owner, by pattern, or both
   truffles scan [flags]                  scan repos from a file with trufflehog
+  truffles verify -f <csv>               live-verify secrets from a results CSV
   truffles disclose [flags]              private advisory or contact issue from CSV
   truffles help                          show this message
 
@@ -36,7 +37,7 @@ search flags:
   -filter string  extra local glob/regex filter in global mode (comma-separated)
   -v              verbose: log every probe failure reason and every request's proxy
   -out string     write results to file (default: stdout)
-  -limit int      max results to output, max 10000 (0 = no limit)
+  -limit int      max repos to output (0 = no limit; user-chosen)
   -workers int    concurrent page fetches (default 8)
   -pool-size int  target number of validated proxies (default 30)
   -use-direct     also spend this machine's own rate-limit budget (default true)
@@ -72,6 +73,7 @@ scan flags:
   -format string     report format: pretty, csv, jsonl (default "csv")
   -skip-file string  skip repos listed here (already scanned; one URL per line)
   -append-scanned s  append successfully scanned URLs to this master file
+  -clean-file path   repos with no verified secrets (.txt URL list or .json; skip + update)
   -no-proxy          direct clones (default true); -no-proxy=false enables pool
   -color string      colourise: auto, always, never (default "auto")
   -progress dur      log progress this often; 0 disables (default 10s)
@@ -87,7 +89,10 @@ scan output:
   fsynced after every repo — Ctrl-C keeps everything finished so far. When
   writing to disk with -format pretty or csv, both a .txt report and a .csv
   are written (same stem). -skip-file drops already-scanned URLs; pass the
-  same path to -append-scanned to grow a master list across runs. Each
+  same path to -append-scanned to grow a master list across runs. -clean-file
+  lists repos that finished a verifying scan with zero verified secrets
+  (.txt one URL/line preferred; skipped on later runs; updated when verification
+  is on). Each
   repo also prints a status line, plus a heartbeat with counts and an ETA:
 
     [ok] stripe/ai                                       5.072s  clean
@@ -218,8 +223,19 @@ func Main(args []string) error {
 		return runSearch(rest)
 	case "scan":
 		return runScan(rest)
+	case "verify":
+		return runVerify(rest)
 	case "disclose":
 		return runDisclose(rest)
+	case "combine":
+		return runCombine(rest)
+	case "consolidate":
+		return runConsolidate(rest)
+	case "clean":
+		if len(rest) > 0 && (rest[0] == "rebuild" || rest[0] == "update") {
+			return runCleanRebuild(rest[1:])
+		}
+		return fmt.Errorf("usage: truffles clean rebuild [dirs...] [-o data/clean-repos.txt] [--include-scanned]")
 	case "wizard":
 		return runWizard(rest)
 	case "examples", "example":
@@ -250,12 +266,12 @@ func Main(args []string) error {
 		}
 		fmt.Printf("wrote %s\n", out)
 		return nil
-	case "playbook:touch", "playbook:example", "playbook:make-example", "pb:example", "pb:touch", "touch-example", "make-example", "example:playbook", "mkplaybook", "playbook:make", "make:playbook", "playbook:touch-example":
+	case "playbook:touch":
 		return runPlaybookTouch(rest)
 	case "cluster":
 		return runCluster(rest)
-	case "cluster:coop", "coop":
-		return runClusterCoop(rest)
+	case "job", "jobs":
+		return runJob(rest)
 	case "version", "--version", "-version", "-v":
 		return runVersion()
 	default:
@@ -285,8 +301,19 @@ func newFlagSet(name string) *flag.FlagSet {
 			p.helpFlag(os.Stderr, "-w, -workers <n>", "Concurrent repos")
 			p.helpFlag(os.Stderr, "-skip-file <f>", "Skip already-scanned repos")
 			p.helpFlag(os.Stderr, "-append-scanned <f>", "Grow master scanned list")
+			p.helpFlag(os.Stderr, "-clean-file <f>", "Repos with 0 verified (.txt/.json)")
 			p.helpFlag(os.Stderr, "-no-proxy", "Direct clones (default); =false for pool")
 			p.helpFlag(os.Stderr, "-max-depth <n>", "Last N commits (lossy)")
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintf(os.Stderr, "%s  %s\n", p.dim("details:"), p.cyan("truffles help full"))
+		case "verify":
+			p.helpUsage(os.Stderr, "truffles verify -f <results.csv>")
+			p.helpSection(os.Stderr, "common flags")
+			p.helpFlag(os.Stderr, "-f, -file <csv>", "Results CSV from scan")
+			p.helpFlag(os.Stderr, "-out <file>", "Default: <input>-verified.csv")
+			p.helpFlag(os.Stderr, "-w, -workers <n>", "Concurrent checks (default 4)")
+			p.helpFlag(os.Stderr, "-detectors <list>", "Only these detectors")
+			p.helpFlag(os.Stderr, "-limit <n>", "Max unique secrets (0=all)")
 			fmt.Fprintln(os.Stderr)
 			fmt.Fprintf(os.Stderr, "%s  %s\n", p.dim("details:"), p.cyan("truffles help full"))
 		default:

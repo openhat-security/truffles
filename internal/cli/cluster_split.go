@@ -74,6 +74,45 @@ func splitRoundRobin(lines []string, n int) [][]string {
 	return chunks
 }
 
+// splitWeighted assigns lines proportional to weights (e.g. per-slave -workers).
+// Same relative capacity → same share of the shuffled list, so a 6-worker box
+// gets ~3× the repos of a 2-worker box and fleets finish closer together.
+func splitWeighted(lines []string, weights []int) [][]string {
+	n := len(weights)
+	if n == 0 {
+		return nil
+	}
+	chunks := make([][]string, n)
+	if len(lines) == 0 {
+		return chunks
+	}
+	w := make([]int, n)
+	total := 0
+	for i, x := range weights {
+		if x < 1 {
+			x = 1
+		}
+		w[i] = x
+		total += x
+	}
+	// Cumulative targets: chunk i ends at round(sum(w[:i+1])/total * len).
+	assigned := 0
+	cumW := 0
+	for i := 0; i < n; i++ {
+		cumW += w[i]
+		target := (cumW*len(lines) + total/2) / total
+		if target < assigned {
+			target = assigned
+		}
+		if i == n-1 {
+			target = len(lines)
+		}
+		chunks[i] = append(chunks[i], lines[assigned:target]...)
+		assigned = target
+	}
+	return chunks
+}
+
 // shuffleLinesDeterministic permutes lines with a seed derived from their content
 // so the same list always maps to the same shuffle (stable across re-runs).
 func shuffleLinesDeterministic(lines []string) []string {
@@ -101,6 +140,16 @@ func splitLinesShuffled(path string, n int) ([][]string, error) {
 	}
 	lines = shuffleLinesDeterministic(lines)
 	return splitRoundRobin(lines, n), nil
+}
+
+// splitLinesShuffledWeighted shuffles then splits by capacity weights.
+func splitLinesShuffledWeighted(path string, weights []int) ([][]string, error) {
+	lines, err := readRepoLines(path)
+	if err != nil {
+		return nil, err
+	}
+	lines = shuffleLinesDeterministic(lines)
+	return splitWeighted(lines, weights), nil
 }
 
 func splitLinesHash(path string, n int) ([][]string, error) {

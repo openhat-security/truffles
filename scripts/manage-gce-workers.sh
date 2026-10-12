@@ -88,6 +88,11 @@ Horizontal (preferred for 100+ repos):
   2–3 × e2-standard-2  →  playbook with multiple slaves (see examples/playbook.remote-multi.yaml)
   Keep scan.no_proxy: true (direct clones). Proxies help search, not big packs.
 
+Mixed fleet (benchmark size vs count):
+  2 × e2-standard-2 (slaves.workers: 6) + N × e2-small (slaves.workers: 2)
+  cluster run splits repos by workers: so big boxes get a larger share.
+  Compare repos/hour per machine (and $/repo) from each scan-worker*.log.
+
 Disk: ≥50 GB SSD boot disk. Concurrent mirrors of large LLM repos eat /tmp quickly.
 
 After create:

@@ -36,18 +36,24 @@ type SearchConfig struct {
 	Owner      string   `yaml:"owner"`
 	Queries    []string `yaml:"queries"`
 	PrefixFile string   `yaml:"prefix_file"` // API key prefixes → GitHub code search per line
+	TermsFile  string   `yaml:"terms_file"`  // search terms (one per line); see -terms-file
+	Seed       int64    `yaml:"seed"`        // shuffle query/page order; 0 = random each run
+	ProxyFile  string   `yaml:"proxy_file"`  // host:port list; probed before free lists
 	Filter     string   `yaml:"filter"`
-	Regex     bool     `yaml:"regex"`
-	Limit     int      `yaml:"limit"`
-	Out       string   `yaml:"out"`
-	Workers   int      `yaml:"workers"`
-	PoolSize  int      `yaml:"pool_size"`
-	NoProxy   bool     `yaml:"no_proxy"`
-	UseDirect *bool    `yaml:"use_direct"`
-	PoolWait  string   `yaml:"pool_wait"`
-	Token     string   `yaml:"token"`  // single token or comma-separated list
-	Tokens    []string `yaml:"tokens"` // additional tokens (env-expanded); merged with token
-	Progress  string   `yaml:"progress"`
+	Regex      bool     `yaml:"regex"`
+	Limit      int      `yaml:"limit"`
+	Out        string   `yaml:"out"`
+	Workers    int      `yaml:"workers"`
+	PoolSize   int      `yaml:"pool_size"`
+	NoProxy    bool     `yaml:"no_proxy"`
+	UseDirect  *bool    `yaml:"use_direct"`
+	PoolWait   string   `yaml:"pool_wait"`
+	Token      string   `yaml:"token"`  // single token or comma-separated list
+	Tokens     []string `yaml:"tokens"` // additional tokens (env-expanded); merged with token
+	Progress   string   `yaml:"progress"`
+	// SkipFile drops already-scanned URLs during discovery (not counted toward limit).
+	// If empty, playbook falls back to scan.skip_file.
+	SkipFile string `yaml:"skip_file"`
 }
 
 type ScanConfig struct {
@@ -60,6 +66,7 @@ type ScanConfig struct {
 	JSON           *bool    `yaml:"json"`
 	NoVerification bool     `yaml:"no_verification"`
 	MaxDepth       int      `yaml:"max_depth"`
+	Since          string   `yaml:"since"` // default 2y; full clone + scan window; all = entire history
 	ExcludePaths   []string `yaml:"exclude_paths"`
 	Color          string   `yaml:"color"`
 	Progress       string   `yaml:"progress"`
@@ -71,6 +78,8 @@ type ScanConfig struct {
 	PoolWait      string `yaml:"pool_wait"`
 	SkipFile      string `yaml:"skip_file"`
 	AppendScanned string `yaml:"append_scanned"`
+	// CleanFile lists repos scanned with zero verified secrets (.txt or .json).
+	CleanFile string `yaml:"clean_file"`
 }
 
 // runPlaybookHeal is `truffles playbook heal -f <yaml>` — same as cluster heal -c.
@@ -221,6 +230,11 @@ func runPlaybook(rest []string) error {
 	}
 	collectDir := lay.CollectDir
 	fmt.Printf("[*] run dir: %s\n", collectDir)
+	runPerfBegin(collectDir, PerformanceMetadata{
+		Command:    "playbook",
+		Playbook:   pb.Name,
+		CollectDir: collectDir,
+	})
 
 	runStart := time.Now()
 	var (
@@ -273,12 +287,19 @@ func runPlaybook(rest []string) error {
 			return err
 		}
 		scanDur = time.Since(scanStart)
-		if err := clusterCollectOnWith(c, collectDir, pb.Scan); err != nil {
+		perfRecordPhaseChunk("scan", "cluster", fmt.Sprintf("%d slaves", len(enabledSlaves(c))), true, scanDur, map[string]interface{}{
+			"repos": countURLLines(reposFile), "workers_per_slave": workers,
+		})
+		collectStart := time.Now()
+		collectFiles := 0
+		if err := clusterCollectOnWith(c, collectDir, pb.Scan, &collectFiles); err != nil {
 			fmt.Fprintf(logger, "collect error: %v\n", err)
 			return err
 		}
-		if err := finalizePlaybookRun(collectDir, pb.Name, runStart, searchRan, searchDur, scanDur); err != nil {
-			fmt.Fprintf(logger, "timing write error: %v\n", err)
+		collectDur := time.Since(collectStart)
+		if err := finalizePlaybookRun(collectDir, pb.Name, "playbook", runStart, searchRan, searchDur, scanDur, collectDur,
+			nil, &ScanPerformanceMeta{Repos: countURLLines(reposFile)}, &CollectPerformanceMeta{FilesCopied: collectFiles}, nil); err != nil {
+			fmt.Fprintf(logger, "performance write error: %v\n", err)
 			return err
 		}
 		fmt.Printf("completed. results: %s\n", collectDir)
@@ -293,8 +314,9 @@ func runPlaybook(rest []string) error {
 		return err
 	}
 	scanDur = time.Since(scanStart)
-	if err := finalizePlaybookRun(collectDir, pb.Name, runStart, searchRan, searchDur, scanDur); err != nil {
-		fmt.Fprintf(logger, "timing write error: %v\n", err)
+	if err := finalizePlaybookRun(collectDir, pb.Name, "playbook", runStart, searchRan, searchDur, scanDur, 0,
+		nil, nil, nil, nil); err != nil {
+		fmt.Fprintf(logger, "performance write error: %v\n", err)
 		return err
 	}
 
@@ -319,6 +341,12 @@ func loadPlaybook(path string) (*Playbook, error) {
 	if pb.Search.PrefixFile != "" {
 		pb.Search.PrefixFile = resolveEnvFile(path, pb.Search.PrefixFile)
 	}
+	if pb.Search.TermsFile != "" {
+		pb.Search.TermsFile = resolveEnvFile(path, pb.Search.TermsFile)
+	}
+	if pb.Search.ProxyFile != "" {
+		pb.Search.ProxyFile = resolveEnvFile(path, pb.Search.ProxyFile)
+	}
 	expandPlaybook(&pb)
 	return &pb, nil
 }
@@ -327,7 +355,7 @@ func playbookHasSearch(pb *Playbook) bool {
 	if pb == nil {
 		return false
 	}
-	return pb.Search.Owner != "" || len(pb.Search.Queries) > 0 || pb.Search.PrefixFile != ""
+	return pb.Search.Owner != "" || len(pb.Search.Queries) > 0 || pb.Search.PrefixFile != "" || pb.Search.TermsFile != ""
 }
 
 // reposListBasename is the filename for the repo URL list inside the run dir.
@@ -367,6 +395,15 @@ func buildSearchArgs(pb Playbook) []string {
 	if pb.Search.PrefixFile != "" {
 		args = append(args, "-prefix-file", pb.Search.PrefixFile)
 	}
+	if pb.Search.TermsFile != "" {
+		args = append(args, "-terms-file", pb.Search.TermsFile)
+	}
+	if pb.Search.Seed != 0 {
+		args = append(args, "-seed", fmt.Sprintf("%d", pb.Search.Seed))
+	}
+	if pb.Search.ProxyFile != "" {
+		args = append(args, "-proxy-file", pb.Search.ProxyFile)
+	}
 	if pb.Search.Filter != "" {
 		args = append(args, "-filter", pb.Search.Filter)
 	}
@@ -375,6 +412,16 @@ func buildSearchArgs(pb Playbook) []string {
 	}
 	if pb.Search.Limit != 0 {
 		args = append(args, "-limit", fmt.Sprintf("%d", pb.Search.Limit))
+	}
+	skip := pb.Search.SkipFile
+	if skip == "" {
+		skip = pb.Scan.SkipFile
+	}
+	if skip != "" {
+		args = append(args, "-skip-file", skip)
+	}
+	if pb.Scan.CleanFile != "" {
+		args = append(args, "-clean-file", pb.Scan.CleanFile)
 	}
 	if pb.Search.Out != "" {
 		args = append(args, "-out", pb.Search.Out)
@@ -437,6 +484,11 @@ func buildScanArgs(pb Playbook) []string {
 	if pb.Scan.MaxDepth != 0 {
 		args = append(args, "-max-depth", fmt.Sprintf("%d", pb.Scan.MaxDepth))
 	}
+	if s := resolveSinceFlag(pb.Scan.Since); s != "" {
+		args = append(args, "-since", s)
+	} else {
+		args = append(args, "-since", "all")
+	}
 	if len(pb.Scan.ExcludePaths) > 0 {
 		args = append(args, "-exclude-paths", strings.Join(pb.Scan.ExcludePaths, ","))
 	}
@@ -461,6 +513,9 @@ func buildScanArgs(pb Playbook) []string {
 	}
 	if pb.Scan.AppendScanned != "" {
 		args = append(args, "-append-scanned", pb.Scan.AppendScanned)
+	}
+	if pb.Scan.CleanFile != "" {
+		args = append(args, "-clean-file", pb.Scan.CleanFile)
 	}
 	return args
 }
@@ -504,6 +559,7 @@ Playbook YAML example:
     format: csv
     skip_file: data/scanned-repos.txt
     append_scanned: data/scanned-repos.txt
+    clean_file: data/clean-repos.txt
     exclude_paths:
       - node_modules
       - vendor

@@ -44,8 +44,34 @@ func TestCombineResultCSVs(t *testing.T) {
 			t.Fatalf("missing %q in %q", want, got)
 		}
 	}
+	verPath := filepath.Join(dir, combinedVerifiedCSVName)
+	vb, err := os.ReadFile(verPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vgot := string(vb)
+	if !strings.Contains(vgot, "a,true,s1") || !strings.Contains(vgot, "c,true,s3") {
+		t.Fatalf("verified csv missing rows: %q", vgot)
+	}
+	if strings.Contains(vgot, "b,false,s2") {
+		t.Fatalf("verified csv should omit unverified: %q", vgot)
+	}
 	// Individuals kept.
 	if _, err := os.Stat(filepath.Join(dir, "results-worker1.csv")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCsvLineVerified(t *testing.T) {
+	h := "detector,verified,secret"
+	col := csvColumnIndex(h, "verified")
+	if col != 1 {
+		t.Fatalf("col=%d", col)
+	}
+	if !csvLineVerified("OpenAI,true,sk-x", col) {
+		t.Fatal("expected verified")
+	}
+	if csvLineVerified("OpenAI,false,sk-x", col) {
+		t.Fatal("expected unverified")
 	}
 }

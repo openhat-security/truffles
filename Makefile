@@ -1,5 +1,5 @@
 # Development tasks. `make` builds; `make check` is what CI runs.
-BINARY  := ./bin/truffles
+BINARY  := ./truffles
 PKG     := ./...
 GOFLAGS ?=
 
@@ -10,7 +10,7 @@ TAPE ?= quickstart
 
 all: build
 
-build: ## Build the binary into the repo root
+build: ## Build the binary into the repo root (./truffles)
 	go build $(GOFLAGS) -o $(BINARY) ./cmd/truffles
 
 install: ## Install into $GOPATH/bin

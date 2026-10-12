@@ -40,6 +40,22 @@ func TestKilledBySignalAndMessage(t *testing.T) {
 	}
 }
 
+func TestGitScanURIEmbedsGitHubToken(t *testing.T) {
+	got := gitScanURI("https://github.com/o/r", "ghp_test")
+	if got != "https://x-access-token:ghp_test@github.com/o/r" {
+		t.Fatalf("got %q", got)
+	}
+	if gitScanURI("https://github.com/o/r", "") != "https://github.com/o/r" {
+		t.Fatal("empty token should leave URL alone")
+	}
+	if gitScanURI("https://user:pass@github.com/o/r", "ghp_test") != "https://user:pass@github.com/o/r" {
+		t.Fatal("should not overwrite existing userinfo")
+	}
+	if gitScanURI("https://gitlab.com/o/r", "ghp_test") != "https://gitlab.com/o/r" {
+		t.Fatal("non-github hosts stay bare")
+	}
+}
+
 func TestPermanentScanError(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -48,6 +64,8 @@ func TestPermanentScanError(t *testing.T) {
 	}{
 		{"repo not found", `{"msg":"git clone failed","error":"remote: Repository not found."}`, true},
 		{"auth", `{"error":"could not read Username for 'https://github.com': terminal prompts disabled"}`, true},
+		{"unknown flag", "trufflehog: error: unknown long flag '--token', try --help", true},
+		{"bad local uri", `{"error":"unsupported Git URI: /tmp/truffles-since-1"}`, true},
 		{"transient", `{"error":"net/http: TLS handshake timeout"}`, false},
 		{"empty", "", false},
 	}
@@ -75,6 +93,13 @@ func TestScanErrorExtractsReasonFromJSONLogs(t *testing.T) {
 	}
 	if strings.Contains(msg, "\n") {
 		t.Errorf("scanError = %q, want a single line", msg)
+	}
+}
+
+func TestScanErrorPlainCLI(t *testing.T) {
+	err := scanError(exec.ErrNotFound, []byte("trufflehog: error: unknown long flag '--token', try --help\n"))
+	if err == nil || !strings.Contains(err.Error(), "unknown long flag") {
+		t.Fatalf("got %v", err)
 	}
 }
 
@@ -136,5 +161,17 @@ func TestScanRejectsMachineFormatWithoutJSON(t *testing.T) {
 	err := runScan([]string{"-f", "x.txt", "-format", "csv", "-json=false"})
 	if err == nil || !strings.Contains(err.Error(), "-json") {
 		t.Errorf("error = %v, want it to explain the -json requirement", err)
+	}
+}
+
+func TestEnsureResultsInclude(t *testing.T) {
+	if got := ensureResultsInclude("verified,unknown", "unverified"); got != "verified,unknown,unverified" {
+		t.Fatalf("got %q", got)
+	}
+	if got := ensureResultsInclude("verified,unknown,unverified", "unverified"); got != "verified,unknown,unverified" {
+		t.Fatalf("dup %q", got)
+	}
+	if got := ensureResultsInclude("", "unverified"); got != "unverified" {
+		t.Fatalf("empty %q", got)
 	}
 }

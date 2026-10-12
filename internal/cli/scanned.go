@@ -119,6 +119,70 @@ func (a *scannedAppender) Add(url string) error {
 	return nil
 }
 
+// writeCombinedSkipFile writes a newline URL list = skip_file ∪ clean_file keys.
+func writeCombinedSkipFile(outPath, skipFile, cleanFile string) error {
+	skip, err := loadSkipSet(skipFile)
+	if err != nil {
+		return err
+	}
+	if _, err := unionCleanIntoSkip(skip, cleanFile); err != nil {
+		return err
+	}
+	if dir := filepath.Dir(outPath); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
+	f, err := os.Create(outPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	// Prefer original URLs from the skip file when present.
+	if skipFile != "" {
+		if urls, err := readURLs(skipFile); err == nil {
+			seen := map[string]struct{}{}
+			for _, u := range urls {
+				key := normalizeRepoURL(u)
+				if key == "" {
+					continue
+				}
+				if _, ok := seen[key]; ok {
+					continue
+				}
+				seen[key] = struct{}{}
+				if _, err := fmt.Fprintln(f, u); err != nil {
+					return err
+				}
+				delete(skip, key)
+			}
+		}
+	}
+	if cleanFile != "" {
+		if m, err := loadCleanMap(cleanFile); err == nil {
+			for k, e := range m {
+				if _, still := skip[k]; !still {
+					continue
+				}
+				u := e.URL
+				if u == "" {
+					u = "https://" + k
+				}
+				if _, err := fmt.Fprintln(f, u); err != nil {
+					return err
+				}
+				delete(skip, k)
+			}
+		}
+	}
+	for k := range skip {
+		if _, err := fmt.Fprintln(f, "https://"+k); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // mergeScannedFiles appends unique URLs from deltas into master (creating it).
 func mergeScannedFiles(master string, deltas []string) (added int, err error) {
 	if master == "" {
@@ -147,6 +211,9 @@ func mergeScannedFiles(master string, deltas []string) (added int, err error) {
 				added++
 			}
 		}
+	}
+	if added > 0 {
+		CoreLogScannedMerge(master, added, "cluster-collect")
 	}
 	return added, nil
 }

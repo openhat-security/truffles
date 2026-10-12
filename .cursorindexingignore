@@ -1,7 +1,10 @@
-# Semantic index only. Same heavy trees as .cursorignore.
+# Semantic index only. data/ stays visible (see !data/ in .cursorignore)
+# but is not embedded — reports can contain live secrets.
 bin/
 dist/
 data/
 .git/
 node_modules/
 .cursor/local/
+
+.scratch*

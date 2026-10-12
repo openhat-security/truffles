@@ -1,0 +1,16 @@
+# OpenAI-focused GitHub code search (one per line → "<term>" in:file).
+#   ./examples/search-ai-keys.sh
+
+# Literal / env names (code mentions)
+openai
+OPENAI_API_KEY
+OPENAI_API_KEY=
+
+# Key prefixes (TruffleHog openai / openaiadmin)
+sk-proj-
+sk-svcacct-
+sk-service-
+sk-admin-
+
+# Legacy OpenAI user keys embed this marker (sk-…T3BlbkFJ…)
+T3BlbkFJ

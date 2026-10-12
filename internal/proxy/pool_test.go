@@ -9,7 +9,7 @@ import (
 func quiet(string, ...any) {}
 
 func TestPoolWithDirectSeedsLiveWithoutProbing(t *testing.T) {
-	p := NewPool(5, 10, false, true, quiet)
+	p := NewPool(5, -1, 10, false, true, quiet)
 	s := p.Stats()
 	if !s.Direct {
 		t.Error("Stats.Direct = false, want true when -use-direct is on")
@@ -22,7 +22,7 @@ func TestPoolWithDirectSeedsLiveWithoutProbing(t *testing.T) {
 }
 
 func TestPoolWithoutDirectHasNoLocalIP(t *testing.T) {
-	p := NewPool(5, 10, false, false, quiet)
+	p := NewPool(5, -1, 10, false, false, quiet)
 	if p.Stats().Direct {
 		t.Error("Stats.Direct = true, want false when -use-direct is off")
 	}
@@ -34,7 +34,7 @@ func TestPoolWithoutDirectHasNoLocalIP(t *testing.T) {
 // The local IP is only ever a filler. If it won ties it would take most
 // requests, and its rate-limit budget is the one that cannot be replaced.
 func TestNextPrefersProxyOverDirect(t *testing.T) {
-	p := NewPool(5, 10, false, true, quiet)
+	p := NewPool(5, -1, 10, false, true, quiet)
 	real := newProxy("1.2.3.4:8080")
 	p.live = append(p.live, real)
 
@@ -45,7 +45,7 @@ func TestNextPrefersProxyOverDirect(t *testing.T) {
 }
 
 func TestNextFallsBackToDirectWhenNoProxyReady(t *testing.T) {
-	p := NewPool(5, 10, false, true, quiet)
+	p := NewPool(5, -1, 10, false, true, quiet)
 	// A proxy exists but is still paced, so direct is the only option.
 	paced := newProxy("1.2.3.4:8080")
 	paced.nextAt = time.Now().Add(time.Hour)
@@ -61,7 +61,7 @@ func TestNextFallsBackToDirectWhenNoProxyReady(t *testing.T) {
 }
 
 func TestNextWithoutPoolReturnsNil(t *testing.T) {
-	p := NewPool(5, 10, false, false, quiet)
+	p := NewPool(5, -1, 10, false, false, quiet)
 	if got := p.Next(context.Background(), time.Millisecond); got != nil {
 		t.Errorf("Next = %v, want nil so callers fall back to a direct client", got)
 	}
@@ -69,7 +69,7 @@ func TestNextWithoutPoolReturnsNil(t *testing.T) {
 
 // Retiring the local IP would remove the only source guaranteed to exist.
 func TestReportFailureDoesNotRetireDirect(t *testing.T) {
-	p := NewPool(5, 10, false, true, quiet)
+	p := NewPool(5, -1, 10, false, true, quiet)
 	before := p.Stats().Alive
 
 	p.ReportFailure(p.live[0]) // the direct member
@@ -84,7 +84,7 @@ func TestReportFailureDoesNotRetireDirect(t *testing.T) {
 }
 
 func TestReportFailureRetiresProxy(t *testing.T) {
-	p := NewPool(5, 10, false, true, quiet)
+	p := NewPool(5, -1, 10, false, true, quiet)
 	pr := newProxy("1.2.3.4:8080")
 	p.live = append(p.live, pr)
 
@@ -99,7 +99,7 @@ func TestReportFailureRetiresProxy(t *testing.T) {
 }
 
 func TestNextRespectsPacing(t *testing.T) {
-	p := NewPool(5, 10, false, false, quiet)
+	p := NewPool(5, -1, 10, false, false, quiet)
 	pr := newProxy("1.2.3.4:8080")
 	p.live = append(p.live, pr)
 
@@ -121,7 +121,7 @@ func TestNextRespectsPacing(t *testing.T) {
 
 func TestProxyBusyHoldsUntilRelease(t *testing.T) {
 	// No direct member — only one proxy. Busy must block Next until release.
-	p := NewPool(1, 1, false, false, quiet)
+	p := NewPool(1, -1, 1, false, false, quiet)
 	pr := newProxy("1.2.3.4:8080")
 	p.mu.Lock()
 	p.live = append(p.live, pr)
@@ -168,7 +168,7 @@ func TestDirectAddrIsNotMistakenForAProxy(t *testing.T) {
 }
 
 func TestStatsReflectsRetirements(t *testing.T) {
-	p := NewPool(3, 10, false, false, quiet)
+	p := NewPool(3, -1, 10, false, false, quiet)
 	a, b := newProxy("1.1.1.1:80"), newProxy("2.2.2.2:80")
 	p.live = append(p.live, a, b)
 
@@ -188,7 +188,7 @@ func TestStatsReflectsRetirements(t *testing.T) {
 // callers wait on ProxiesAlive, and counting direct there would defeat the
 // pool wait entirely.
 func TestStatsSeparatesProxiesFromDirect(t *testing.T) {
-	p := NewPool(5, 10, false, true, quiet)
+	p := NewPool(5, -1, 10, false, true, quiet)
 	if got := p.Stats().ProxiesAlive; got != 0 {
 		t.Errorf("ProxiesAlive = %d, want 0 before anything is probed", got)
 	}
@@ -204,7 +204,7 @@ func TestStatsSeparatesProxiesFromDirect(t *testing.T) {
 }
 
 func TestProxiesAliveExcludesRetired(t *testing.T) {
-	p := NewPool(5, 10, false, false, quiet)
+	p := NewPool(5, -1, 10, false, false, quiet)
 	pr := newProxy("1.2.3.4:8080")
 	p.live = append(p.live, pr)
 	p.ReportFailure(pr)
