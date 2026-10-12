@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-12
+
 ### Added
 - `truffles job` continuous loop manager (`start`/`list`/`status`/`logs`/`stop`); loop runs in-process via `job run` (no source-tree scripts required for packaged binaries)
 - `truffles combine` — secret-dedup merge of `results-*.csv` (prefer verified + github.com URLs)
