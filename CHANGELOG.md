@@ -1,5 +1,16 @@
 ## [Unreleased]
 
+### Added
+- `truffles cluster clean-disk` — purge orphan `/tmp/truffles-since-*` clones and workdir artifacts (`--orphans-only`, `--dry-run`); auto-purge after collect; scans stall when disk ≥ 90%
+- `truffles cluster scale` — bump `slaves[].workers` and/or GCE machine type (`--workers`, `--machine`, `--worker name,…`)
+- Rich `truffles job status` — progress table, per-worker CPU/Mem/Disk `% (GB)`, Repos with `/hr`, tips for clean/grow disk; `--full` adds lifetime totals, machine type, and cost estimate
+- Expanded VHS demo gallery (`assets/*.tape`): scan, verify, disclose, results, playbook-gen, remote/cluster/job against live GCE fleet; longer read pauses between commands
+- `examples/search-ai-llm.txt` for AI/LLM term search in remote loops
+- Demo fixtures under `assets/fixtures/` (fake secrets only) for verify/disclose/results tapes
+
+### Changed
+- Job status / cluster ops prefer a human gcloud `--account` when a Firebase SA would 403
+
 ## [1.1.0] - 2026-10-12
 
 ### Added

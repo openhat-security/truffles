@@ -355,14 +355,7 @@ func gceReset(sl Slave) error {
 	if sl.GCEProject != "" {
 		args = append(args, "--project="+sl.GCEProject)
 	}
-	cmd := exec.Command("gcloud", args...)
-	cmd.Env = gcloudUserCLIEnv()
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("%w\n(hint: gcloud auth login  # user creds for gcloud CLI, not application-default)", err)
-	}
-	return nil
+	return runGcloud(args...)
 }
 
 // gcloudUserCLIEnv is the process env for gcloud CLI calls with ADC stripped so
@@ -381,6 +374,82 @@ func gcloudUserCLIEnv() []string {
 		out = append(out, e)
 	}
 	return out
+}
+
+// gcloudAccountOverride is set by --account on cluster scale / heal / reset.
+var gcloudAccountOverride string
+
+// resolveGcloudUserAccount picks a human gcloud auth login account, skipping
+// service accounts (*.iam.gserviceaccount.com / *-compute@developer…).
+// Prefer: explicit override → TRUFFLES_GCLOUD_ACCOUNT → first non-SA credentialed account.
+func resolveGcloudUserAccount() (string, error) {
+	if a := strings.TrimSpace(gcloudAccountOverride); a != "" {
+		return a, nil
+	}
+	if a := strings.TrimSpace(os.Getenv("TRUFFLES_GCLOUD_ACCOUNT")); a != "" {
+		return a, nil
+	}
+	cmd := exec.Command("gcloud", "auth", "list", "--format=value(account)")
+	cmd.Env = gcloudUserCLIEnv()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("gcloud auth list: %w\n%s\n(hint: gcloud auth login)", err, strings.TrimSpace(string(out)))
+	}
+	var human, anyAcc []string
+	for _, line := range strings.Split(string(out), "\n") {
+		a := strings.TrimSpace(line)
+		if a == "" {
+			continue
+		}
+		anyAcc = append(anyAcc, a)
+		if !isGcloudServiceAccount(a) {
+			human = append(human, a)
+		}
+	}
+	if len(human) > 0 {
+		return human[0], nil
+	}
+	if len(anyAcc) > 0 {
+		return "", fmt.Errorf("only service accounts in gcloud auth list (%s) — run: gcloud auth login  # then: gcloud config set account you@email", anyAcc[0])
+	}
+	return "", fmt.Errorf("no gcloud accounts — run: gcloud auth login")
+}
+
+func isGcloudServiceAccount(account string) bool {
+	a := strings.ToLower(account)
+	return strings.HasSuffix(a, ".iam.gserviceaccount.com") ||
+		strings.Contains(a, "-compute@developer.gserviceaccount.com") ||
+		strings.HasSuffix(a, "@developer.gserviceaccount.com")
+}
+
+// runGcloud runs `gcloud <args…>` with ADC stripped and --account set to a
+// human user when available (avoids firebase-adminsdk / compute SA as active).
+func runGcloud(args ...string) error {
+	account, err := resolveGcloudUserAccount()
+	if err != nil {
+		return err
+	}
+	full := append([]string{"--account", account}, args...)
+	cmd := exec.Command("gcloud", full...)
+	cmd.Env = gcloudUserCLIEnv()
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	fmt.Fprintf(os.Stderr, "[*] gcloud --account %s %s\n", account, strings.Join(args, " "))
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%w\n(hint: gcloud auth login && gcloud config set account YOU@email — active account must not be a service account)", err)
+	}
+	return nil
+}
+
+func runGcloudOutput(args ...string) ([]byte, error) {
+	account, err := resolveGcloudUserAccount()
+	if err != nil {
+		return nil, err
+	}
+	full := append([]string{"--account", account}, args...)
+	cmd := exec.Command("gcloud", full...)
+	cmd.Env = gcloudUserCLIEnv()
+	return cmd.CombinedOutput()
 }
 
 func clusterWaitSSH(c *Cluster, timeout time.Duration) error {

@@ -34,8 +34,9 @@ Operational guide for [truffles](https://github.com/openhat-security/truffles): 
 ./truffles job start -c remote-playbook.yaml --prefix-file examples/prefixes-openai.txt
 ```
 
-5. Watch: `./truffles job list` → `./truffles job logs <id> -f`
-6. After each cycle, open `data/remote-results-<timestamp>/results-verified.csv`.
+5. Watch: `./truffles job list` → `./truffles job status` → `./truffles job logs <id> -f`
+6. If a worker disk hits ~90%: `./truffles cluster clean-disk -c remote-playbook.yaml --orphans-only`
+7. After each cycle, open `data/remote-results-<timestamp>/results-verified.csv`.
 
 ## Repo docs (non-wiki)
 

@@ -11,6 +11,8 @@
 *.csv
 *.jsonl
 *.txt
+!assets/fixtures/
+!assets/fixtures/**
 
 
 # Input lists are per-machine, not source.

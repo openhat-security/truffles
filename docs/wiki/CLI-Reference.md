@@ -30,9 +30,11 @@ Authoritative flag list from the binary:
 | `cluster stop` | Kill remote scans |
 | `cluster reset` | GCE instance reset |
 | `cluster heal` | stop → reset → deploy |
+| `cluster clean-disk` | Purge orphan clones / workdir artifacts |
+| `cluster scale` | Bump workers and/or GCE machine type |
 | `job start` | Background 24/7 loop |
 | `job run` | Foreground loop (used by start) |
-| `job list` / `status` / `logs` / `stop` | Job registry |
+| `job list` / `status` / `logs` / `stop` | Job registry (`status --full` for cost) |
 | `wizard` | Interactive setup |
 | `examples` | Copy-paste samples |
 | `version` | Build version |

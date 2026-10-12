@@ -30,6 +30,9 @@ type jobMeta struct {
 	ID         string `json:"id"`
 	Playbook   string `json:"playbook"`
 	PrefixFile string `json:"prefix_file,omitempty"`
+	TermsFile  string `json:"terms_file,omitempty"`
+	DataDir    string `json:"data_dir,omitempty"`
+	Workers    int    `json:"workers,omitempty"`
 	Mode       string `json:"mode"` // split | playbook
 	PID        int    `json:"pid"`
 	PGID       int    `json:"pgid,omitempty"`
@@ -74,7 +77,7 @@ func jobUsage() error {
 usage:
   truffles job start -c <playbook.yaml> [flags]
   truffles job list
-  truffles job status <id>
+  truffles job status [id] [--full]
   truffles job logs <id> [-f] [-n N]
   truffles job stop <id>
 
@@ -89,6 +92,10 @@ start flags:
   --once                       Single cycle then exit
   --jobs-dir <dir>             Registry root (default data/jobs)
   --data-dir <dir>             Data directory (default data)
+
+status flags:
+  --full                       Per-worker CPU/mem/disk + GCE machine type when set
+  --color auto|always|never    Colour (default auto)
 
 Jobs run until stop. The loop is in-process (job run); no scripts/ checkout needed.
 On macOS, start wraps with caffeinate -dims when available.
@@ -380,6 +387,9 @@ func jobStart(args []string) error {
 		ID:         id,
 		Playbook:   *playbook,
 		PrefixFile: *prefixFile,
+		TermsFile:  *termsFile,
+		DataDir:    *dataDir,
+		Workers:    *workers,
 		Mode:       mode,
 		PID:        pid,
 		PGID:       pgid,
@@ -487,50 +497,6 @@ func jobList(args []string) error {
 		}
 		fmt.Printf("%-20s %-8s %7d  %-28s  %s\n", m.ID, m.Status, m.PID, pb, pfx)
 	}
-	return nil
-}
-
-func jobStatus(args []string) error {
-	id, jobsDir, err := parseJobIDArgs(args, true)
-	if err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return jobUsage()
-		}
-		return fmt.Errorf("usage: truffles job status <id>: %w", err)
-	}
-	root, err := filepath.Abs(jobsDir)
-	if err != nil {
-		return err
-	}
-	id, err = resolveJobID(root, id)
-	if err != nil {
-		return err
-	}
-	m, err := loadJobMeta(root, id)
-	if err != nil {
-		return fmt.Errorf("job %s: %w", id, err)
-	}
-	m, _ = refreshJobStatus(root, m)
-	alive := pidAlive(m.PID)
-	fmt.Printf("id:         %s\n", m.ID)
-	fmt.Printf("status:     %s\n", m.Status)
-	fmt.Printf("pid:        %d (alive=%v)\n", m.PID, alive)
-	fmt.Printf("playbook:   %s\n", m.Playbook)
-	fmt.Printf("prefix:     %s\n", m.PrefixFile)
-	fmt.Printf("mode:       %s\n", m.Mode)
-	fmt.Printf("started:    %s\n", m.StartedAt)
-	fmt.Printf("limit:      %d\n", m.Limit)
-	fmt.Printf("sleep:      %ds\n", m.SleepSecs)
-	fmt.Printf("once:       %v\n", m.Once)
-	fmt.Printf("log:        %s\n", m.LogPath)
-	if m.ExitCode != nil {
-		fmt.Printf("exit_code:  %d\n", *m.ExitCode)
-	}
-	if m.Cmd != "" {
-		fmt.Printf("cmd:        %s\n", m.Cmd)
-	}
-	fmt.Println("--- last log lines ---")
-	_ = printLogTail(m.LogPath, 20)
 	return nil
 }
 

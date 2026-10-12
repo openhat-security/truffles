@@ -13,7 +13,7 @@ Set Shell "bash"
 Set FontSize 15
 Set Width 1280
 Set Height 800
-Set TypingSpeed 36ms
+Set TypingSpeed 42ms
 Set Theme "Catppuccin Mocha"
 Set Padding 16
 Set BorderRadius 8
@@ -23,27 +23,34 @@ Set Framerate 30
 Hide
 Type "unset NO_COLOR FORCE_COLOR; export TERM=xterm-256color CLICOLOR=1"
 Enter
-Sleep 200ms
+Sleep 300ms
 Type "test -x ./truffles || go build -o truffles ./cmd/truffles"
 Enter
 Sleep 2s
-Type "clear"
+Type "rm -f repos-ohs.txt"
 Enter
 Sleep 400ms
+Type "clear"
+Enter
+Sleep 500ms
 Show
 
 Type "./truffles"
+Sleep 1.5s
 Enter
-Sleep 2s
+Sleep 4.5s
 
 Type "./truffles search -no-proxy -owner openhat-security -out repos-ohs.txt"
+Sleep 2s
 Enter
-Sleep 6s
+Sleep 8s
 
-Type "wc -l repos-ohs.txt && head -8 repos-ohs.txt"
+Type "wc -l repos-ohs.txt && head -10 repos-ohs.txt"
+Sleep 1.5s
 Enter
-Sleep 2.5s
+Sleep 5s
 
 Type "echo '✓ openhat-security org search complete'"
+Sleep 1.2s
 Enter
-Sleep 2s
+Sleep 3.5s

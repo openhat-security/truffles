@@ -5,8 +5,9 @@ GOFLAGS ?=
 
 .PHONY: all build test race cover fmt fmtcheck vet tidy check clean install demo-vhs demo-vhs-all
 
-# TAPE=quickstart|search|filter|playbook|help (default: quickstart)
+# TAPE=quickstart|help|search|filter|scan|playbook|playbook-gen|verify|disclose|results|remote|cluster|job
 TAPE ?= quickstart
+
 
 all: build
 

@@ -1,0 +1,100 @@
+# AI / LLM GitHub code search (one term per line).
+# Plain lines → "<term>" in:file. Lines with " in:" pass through.
+# Use with:
+#   ./truffles job start -c remote-playbook.yaml \
+#     --terms-file examples/search-ai-llm.txt --seed 0 --limit 3000
+#
+# Mix of product names, env vars, and key prefixes (TruffleHog-aligned where known).
+
+# --- OpenAI ---
+openai
+OPENAI_API_KEY
+OPENAI_API_KEY=
+OPENAI_ORGANIZATION
+sk-proj-
+sk-svcacct-
+sk-service-
+sk-admin-
+T3BlbkFJ
+
+# --- Anthropic / Claude ---
+anthropic
+claude
+ANTHROPIC_API_KEY
+ANTHROPIC_API_KEY=
+CLAUDE_API_KEY
+sk-ant-api03-
+sk-ant-admin01-
+sk-ant-
+
+# --- Google / Gemini / Vertex ---
+gemini
+GOOGLE_API_KEY
+GOOGLE_API_KEY=
+GEMINI_API_KEY
+GOOGLE_GENERATIVE_AI_API_KEY
+VERTEX_AI
+AIzaSy
+
+# --- Meta / Llama ---
+llama
+LLAMA_API_KEY
+GROQ_API_KEY
+gsk_
+
+# --- Mistral ---
+mistral
+MISTRAL_API_KEY
+MISTRAL_API_KEY=
+
+# --- Cohere ---
+cohere
+COHERE_API_KEY
+CO_API_KEY
+
+# --- Hugging Face ---
+huggingface
+HUGGINGFACE_API_KEY
+HF_TOKEN
+HF_API_TOKEN
+hf_
+api_org_
+
+# --- Replicate ---
+replicate
+REPLICATE_API_TOKEN
+REPLICATE_API_KEY
+r8_
+
+# --- Together / Fireworks / Perplexity / OpenRouter ---
+together.ai
+TOGETHER_API_KEY
+FIREWORKS_API_KEY
+fw_
+PERPLEXITY_API_KEY
+pplx-
+OPENROUTER_API_KEY
+openrouter
+
+# --- Azure OpenAI ---
+AZURE_OPENAI
+AZURE_OPENAI_API_KEY
+AZURE_OPENAI_ENDPOINT
+
+# --- LangChain / frameworks (often ship example keys) ---
+langchain
+LANGCHAIN_API_KEY
+LANGSMITH_API_KEY
+llamaindex
+openai in:file language:python
+anthropic in:file language:typescript
+OPENAI_API_KEY in:file
+
+# --- Generic LLM / GenAI ---
+llm
+LLM_API_KEY
+genai
+generative-ai
+chatgpt
+ChatCompletion
+chat.completions

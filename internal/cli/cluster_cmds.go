@@ -44,6 +44,10 @@ func runCluster(rest []string) error {
 		return clusterDeploy(r)
 	case "heal", "recover":
 		return clusterHeal(r)
+	case "clean-disk", "disk-clean", "disk":
+		return clusterCleanDisk(r)
+	case "scale", "resize":
+		return clusterScale(r)
 	default:
 		fmt.Print(clusterUsage())
 		return fmt.Errorf("unknown cluster command %q", cmd)
@@ -63,6 +67,14 @@ usage:
   truffles cluster reset -c cluster.yaml         gcloud compute instances reset
   truffles cluster deploy -c cluster.yaml        cross-compile + scp binary to workers
   truffles cluster heal -c cluster.yaml          stop → reset → wait SSH → deploy
+  truffles cluster clean-disk -c playbook.yaml   purge orphan clones + workdir artifacts
+  truffles cluster clean-disk -c … --dry-run     show what would be deleted
+  truffles cluster clean-disk -c … --orphans-only  only /tmp/truffles-since-*
+  truffles cluster scale -c playbook.yaml --workers 4
+  truffles cluster scale -c … --worker worker3 --machine e2-standard-2 --workers 4
+
+  After collect, workers auto-purge copied artifacts. Scans stall when disk ≥ 90%.
+  scale: bump YAML concurrency (next cycle) and/or GCE machine type (stops that VM).
 
   Omit -f with a playbook YAML: runs search from the YAML into
   <data_dir>/<scan_name>/repos.txt, then scans and collects into that same dir.
@@ -417,6 +429,11 @@ func clusterRunOnOnce(c *Cluster, reposFile string, workers int, format string, 
 		if i >= len(splits) {
 			continue
 		}
+		// Stall this worker (purge orphans, wait) when root disk is ≥ 90%.
+		if err := ensureWorkerDiskSpace(sl, defaultDiskStallPct, 10*time.Minute); err != nil {
+			fmt.Fprintf(os.Stderr, "[!] %v — skipping worker this cycle\n", err)
+			continue
+		}
 		wd := slaveWorkDir(sl)
 		if err := ensureRemoteWorkDir(sl); err != nil {
 			fmt.Fprintf(os.Stderr, "workdir %s: %v\n", sl.Name, err)
@@ -679,6 +696,8 @@ func clusterCollectOnWith(c *Cluster, outDir string, sc ScanConfig, filesCopied 
 	}
 	fmt.Printf("collected to %s\n", outDir)
 	CoreLog("cluster-collect", fmt.Sprintf("out=%s", absPathForLog(outDir)))
+	// Free worker disk now that artifacts are local.
+	purgeWorkerArtifactsAfterCollect(c)
 	return nil
 }
 

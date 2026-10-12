@@ -28,6 +28,36 @@ Cluster commands distribute a repo list across SSH workers defined in the playbo
 
 `cluster run` shuffles repos before split so heavy clones spread across workers.
 
+After **collect**, workers auto-purge copied artifacts. Mid-scan, clones under `/tmp/truffles-since-*` can fill the disk — scans **stall at ≥ 90%** until space is freed.
+
+## Disk clean
+
+```bash
+# Safe mid-scan: only orphan /tmp/truffles-since-* dirs
+./truffles cluster clean-disk -c remote-playbook.yaml --orphans-only
+
+# Preview
+./truffles cluster clean-disk -c remote-playbook.yaml --dry-run
+
+# Full purge of workdir artifacts (after collect / when idle)
+./truffles cluster clean-disk -c remote-playbook.yaml
+```
+
+`job status` prints a **Clean Disk** / **Grow Disk** tip when a worker is near full.
+
+## Scale concurrency or machine type
+
+```bash
+# Next scan cycle uses workers: 4 on every slave (YAML updated)
+./truffles cluster scale -c remote-playbook.yaml --workers 4
+
+# Resize selected GCE VMs (stop → set-machine-type → start; interrupts that worker)
+./truffles cluster scale -c remote-playbook.yaml \
+  --worker worker3,worker4 --machine e2-standard-2 --workers 4
+```
+
+Prefer `--workers` alone while a job is running if you cannot interrupt clones. `--machine` needs gcloud auth (human account preferred over Firebase SA).
+
 ## GCE management
 
 ```bash

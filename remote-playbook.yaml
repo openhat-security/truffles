@@ -175,7 +175,7 @@ slaves:
     gce_instance: ${TRUFFLES_WORKER3_GCE_INSTANCE}
     gce_zone: ${TRUFFLES_WORKER3_GCE_ZONE}
     gce_project: ${TRUFFLES_WORKER3_GCE_PROJECT}
-    workers: 2 # e2-small (~2GB)
+    workers: 4 # e2-small (~2GB)
     enabled: true
 
   - name: worker4
@@ -188,7 +188,7 @@ slaves:
     gce_instance: ${TRUFFLES_WORKER4_GCE_INSTANCE}
     gce_zone: ${TRUFFLES_WORKER4_GCE_ZONE}
     gce_project: ${TRUFFLES_WORKER4_GCE_PROJECT}
-    workers: 2
+    workers: 4
     enabled: true
 
   - name: worker5
@@ -201,7 +201,7 @@ slaves:
     gce_instance: ${TRUFFLES_WORKER5_GCE_INSTANCE}
     gce_zone: ${TRUFFLES_WORKER5_GCE_ZONE}
     gce_project: ${TRUFFLES_WORKER5_GCE_PROJECT}
-    workers: 2
+    workers: 4
     enabled: true
 
   - name: worker6
@@ -214,7 +214,7 @@ slaves:
     gce_instance: ${TRUFFLES_WORKER6_GCE_INSTANCE}
     gce_zone: ${TRUFFLES_WORKER6_GCE_ZONE}
     gce_project: ${TRUFFLES_WORKER6_GCE_PROJECT}
-    workers: 2
+    workers: 4
     enabled: true
 
   - name: worker7
@@ -227,5 +227,5 @@ slaves:
     gce_instance: ${TRUFFLES_WORKER7_GCE_INSTANCE}
     gce_zone: ${TRUFFLES_WORKER7_GCE_ZONE}
     gce_project: ${TRUFFLES_WORKER7_GCE_PROJECT}
-    workers: 2 # us-east1-b (us-central1 IN_USE_ADDRESSES quota is 8)
+    workers: 4 # us-east1-b (us-central1 IN_USE_ADDRESSES quota is 8)
     enabled: true

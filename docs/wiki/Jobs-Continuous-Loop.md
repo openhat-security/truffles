@@ -49,9 +49,13 @@ Optional flags:
 
 ```bash
 ./truffles job list
+./truffles job status                  # latest job if you omit the id
 ./truffles job status j-20261011-185522
+./truffles job status --full           # + lifetime totals, GCE machine type, cost estimate
 ./truffles job logs j-20261011-185522 -f    # follow; Ctrl+C only exits the log viewer
 ```
+
+`job status` shows cycle progress, findings, and a **Workers** table (SSH, uptime, CPU, Mem, Disk `% (GB)`, Repos with `/hr`, concurrent clones). Near-full disks print **Clean Disk** / **Grow Disk** tips.
 
 **Never** paste placeholder ids like `j-YYYYMMDD-HHMMSS` — use the id from `job start` or `job list`.
 

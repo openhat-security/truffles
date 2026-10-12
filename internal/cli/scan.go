@@ -299,6 +299,9 @@ func runScan(args []string) error {
 		go func() {
 			defer wg.Done()
 			for repo := range ch {
+				// Stall (purge orphan clones, wait) when the volume is ≥ 90% full
+				// so concurrent full-history clones do not fill the disk to 100%.
+				ensureLocalDiskSpace(defaultDiskStallPct)
 				atomic.AddInt64(&inFlight, 1)
 				res := scanRepo(ctx, *trufflehogBin, repo, scanOptions{
 					token: tokenPicker.next(), results: resultsFilter, jsonOut: *jsonOut,

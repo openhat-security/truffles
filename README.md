@@ -115,7 +115,7 @@ New here? Run `truffles wizard`. It walks you through owner vs global search, op
 - Reports default to a timestamped file and are fsynced after every repo — Ctrl-C keeps what finished.
 - `-format pretty|csv|jsonl`. Colour respects `NO_COLOR` and `-color always|never`.
 - `-max-depth N` and default `-since 2y` are **lossy** (miss older commits). Use `-since all` when full history matters.
-- **Record demo GIFs:** `brew install vhs && make demo-vhs TAPE=quickstart` → `assets/screenshots/quickstart.{gif,mp4}`. Other tapes: [docs/demos.md](docs/demos.md).
+- **Record demo GIFs:** `brew install vhs && make demo-vhs TAPE=quickstart` → `assets/screenshots/quickstart.{gif,mp4}`. Full gallery (search/scan/playbook/remote/job/…): [docs/demos.md](docs/demos.md) · `make demo-vhs-all`.
 
 ## search / scan
 

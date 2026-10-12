@@ -1,0 +1,3 @@
+detector,verified,timestamp,secret,repository_url,file_line,commit,author,decoder,verification_error
+OpenAI,true,2024-06-01 12:00:00 +0000,sk-proj-DEMO_FAKE_KEY_NOT_REAL_abcdefghijklmnopqrstuvwxyz,https://github.com/openhat-security/run,config/.env:3,aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,Demo <demo@example.com>,PLAIN,
+GitHub,false,2024-06-02 12:00:00 +0000,ghp_DEMO_FAKE_TOKEN_XXXXXXXXXXXXXXXXXXXX,https://github.com/openhat-security/run-action,src/token.go:12,bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,Demo <demo@example.com>,PLAIN,
